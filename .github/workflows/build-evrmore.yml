@@ -52,11 +52,6 @@ jobs:
                           "**/*.md"
                           ]'
           do_not_skip: '["workflow_dispatch", "schedule"]'
-          
-    - name: Set Swap Space
-      uses: pierotofy/set-swap-space@master
-      with:
-        swap-size-gb: 10
 
   build:
     needs: check-jobs
