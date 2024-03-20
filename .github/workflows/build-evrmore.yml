@@ -61,6 +61,11 @@ jobs:
        OS: [ 'windows', 'linux', 'osx', 'arm32v7', 'aarch64' ]
 
     steps:      
+    - name: Set Swap Space
+        uses: pierotofy/set-swap-space@master
+        with:
+          swap-size-gb: 10
+          
     - if: ${{ needs.check-jobs.outputs.should_skip != 'true' }}
       name: Checkout the Code
       uses: actions/checkout@v1
