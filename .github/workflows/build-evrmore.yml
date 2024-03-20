@@ -29,7 +29,7 @@ env:
 jobs:
   check-jobs:
       # continue-on-error: true # Uncomment once integration is finished
-    runs-on: self-hosted
+    runs-on: ubuntu-20.04
     # Map a step output to a job output
     outputs:
       should_skip: ${{ steps.skip_check.outputs.should_skip }}
@@ -52,15 +52,20 @@ jobs:
                           "**/*.md"
                           ]'
           do_not_skip: '["workflow_dispatch", "schedule"]'
+          
+    - name: Set Swap Space
+      uses: pierotofy/set-swap-space@master
+      with:
+        swap-size-gb: 10
 
   build:
     needs: check-jobs
-    runs-on: self-hosted
+    runs-on: ubuntu-20.04
     strategy:
       matrix:
        OS: [ 'windows', 'linux', 'osx', 'arm32v7', 'aarch64' ]
 
-    steps:
+    steps:      
     - if: ${{ needs.check-jobs.outputs.should_skip != 'true' }}
       name: Checkout the Code
       uses: actions/checkout@v1
