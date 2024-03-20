@@ -58,7 +58,7 @@ jobs:
     runs-on: self-hosted
     strategy:
       matrix:
-       OS: [ 'windows', 'linux', 'linux-disable-wallet', 'osx', 'arm32v7', 'arm32v7-disable-wallet', 'aarch64', 'aarch64-disable-wallet' ]
+       OS: [ 'windows', 'linux', 'osx', 'arm32v7', 'aarch64' ]
 
     steps:
     - if: ${{ needs.check-jobs.outputs.should_skip != 'true' }}
@@ -97,7 +97,7 @@ jobs:
 
     - if: ${{ needs.check-jobs.outputs.should_skip != 'true' }}
       name: Build Evrmore
-      run: make -j2
+      run: make -j4
 
 # Skip the binary checks for now.
 #    - if: ${{ needs.check-jobs.outputs.should_skip != 'true' }}
