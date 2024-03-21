@@ -65,7 +65,7 @@ jobs:
       name: Set Swap Space
       uses: pierotofy/set-swap-space@master
       with:
-        swap-size-gb: 10
+        swap-size-gb: 16
           
     - if: ${{ needs.check-jobs.outputs.should_skip != 'true' }}
       name: Checkout the Code
@@ -103,7 +103,7 @@ jobs:
 
     - if: ${{ needs.check-jobs.outputs.should_skip != 'true' }}
       name: Build Evrmore
-      run: make -j4
+      run: make -j1
 
 # Skip the binary checks for now.
 #    - if: ${{ needs.check-jobs.outputs.should_skip != 'true' }}
