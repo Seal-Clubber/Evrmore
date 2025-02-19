@@ -270,6 +270,25 @@ static void FindFilesToPrune(std::set<int>& setFilesToPrune, uint64_t nPruneAfte
 bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, unsigned int flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata, std::vector<CScriptCheck> *pvChecks = nullptr);
 static FILE* OpenUndoFile(const CDiskBlockPos &pos, bool fReadOnly = false);
 
+bool IsTollsActive(bool fForceReset)
+{
+    // If a BIP9 goes active, and then we undo 10 blocks from the chain.
+    // The state of fTollsIsActive would still be true, if it was set to true.
+    // This allows us to force a reset by setting fForceReset
+    if (fForceReset) {
+        fTollsIsActive = false;
+    }
+
+    if (fTollsIsActive)
+        return true;
+
+    const ThresholdState thresholdState = VersionBitsTipState(GetParams().GetConsensus(), Consensus::DEPLOYMENT_TOLL);
+    if (thresholdState == THRESHOLD_ACTIVE)
+        fTollsIsActive = true;
+
+    return fTollsIsActive;
+}
+
 bool CheckFinalTx(const CTransaction &tx, int flags)
 {
     AssertLockHeld(cs_main);
@@ -617,7 +636,7 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         view.SetBackend(viewMemPool);
 
         // do all inputs exist?
-        for (const CTxIn txin : tx.vin) {
+        for (const CTxIn& txin : tx.vin) {
             if (!pcoinsTip->HaveCoinInCache(txin.prevout)) {
                 coins_to_uncache.push_back(txin.prevout);
             }
@@ -1029,7 +1048,7 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
                             }
                         }
                     }
-                } else if (out.scriptPubKey.IsNullAssetTxDataScript()) {
+                } else if (out.scriptPubKey.IsNullAssetTxDataScript(IsTollsActive())) {
                     // We need to track all tags that are being adding to address, that live in the mempool
                     // This will allow us to keep the mempool clean, and only allow one tag per address at a time into the mempool
                     CNullAssetTxData addressNullData;
@@ -1940,7 +1959,7 @@ static DisconnectResult DisconnectBlock(const CBlock& block, const CBlockIndex* 
             } else {
                 if(AreRestrictedAssetsDeployed()) {
                     if (assetsCache) {
-                        if (tx.vout[o].scriptPubKey.IsNullAsset()) {
+                        if (tx.vout[o].scriptPubKey.IsNullAsset(IsTollsActive())) {
                             if (tx.vout[o].scriptPubKey.IsNullAssetVerifierTxDataScript()) {
                                 indexOfRestrictedAssetVerifierString = o;
                             } else {
@@ -2121,7 +2140,7 @@ static DisconnectResult DisconnectBlock(const CBlock& block, const CBlockIndex* 
                     for (auto index: vNullAssetTxIndex) {
                         CScript script = tx.vout[index].scriptPubKey;
 
-                        if (script.IsNullAssetTxDataScript()) {
+                        if (script.IsNullAssetTxDataScript(IsTollsActive())) {
                             CNullAssetTxData data;
                             std::string address;
                             if (!AssetNullDataFromScript(script, data, address)) {
@@ -2566,7 +2585,7 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
                 for (auto out : tx.vout)
                     if (out.scriptPubKey.IsAssetScript())
                         return state.DoS(100, error("%s : Received Block with tx that contained an asset when assets wasn't active", __func__), REJECT_INVALID, "bad-txns-assets-not-active");
-                    else if (out.scriptPubKey.IsNullAsset())
+                    else if (out.scriptPubKey.IsNullAsset(IsTollsActive()))
                         return state.DoS(100, error("%s : Received Block with tx that contained an null asset data tx when assets wasn't active", __func__), REJECT_INVALID, "bad-txns-null-data-assets-not-active");
             }
 
@@ -3256,6 +3275,10 @@ bool static DisconnectTip(CValidationState& state, const CChainParams& chainpara
 
     // Update chainActive and related variables.
     UpdateTip(pindexDelete->pprev, chainparams);
+
+    // Force BIP9 to reset its state now that we have gone back 1 block in the chain
+    IsTollsActive(true);
+
     // Let wallets know transactions went from 1-confirmed to
     // 0-confirmed or conflicted:
     GetMainSignals().BlockDisconnected(pblock);
@@ -4853,11 +4876,12 @@ bool static LoadBlockIndexDB(const CChainParams& chainparams)
     // Calculate nChainWork
     std::vector<std::pair<int, CBlockIndex*> > vSortedByHeight;
     vSortedByHeight.reserve(mapBlockIndex.size());
-    for (const std::pair<uint256, CBlockIndex*>& item : mapBlockIndex)
+    for (const std::pair<const uint256, CBlockIndex*>& item : mapBlockIndex)
     {
         CBlockIndex* pindex = item.second;
         vSortedByHeight.push_back(std::make_pair(pindex->nHeight, pindex));
     }
+
     sort(vSortedByHeight.begin(), vSortedByHeight.end());
     for (const std::pair<int, CBlockIndex*>& item : vSortedByHeight)
     {
@@ -4912,7 +4936,7 @@ bool static LoadBlockIndexDB(const CChainParams& chainparams)
     // Check presence of blk files
     LogPrintf("Checking all blk files are present...\n");
     std::set<int> setBlkDataFiles;
-    for (const std::pair<uint256, CBlockIndex*>& item : mapBlockIndex)
+    for (const std::pair<const uint256, CBlockIndex*>& item : mapBlockIndex)
     {
         CBlockIndex* pindex = item.second;
         if (pindex->nStatus & BLOCK_HAVE_DATA) {

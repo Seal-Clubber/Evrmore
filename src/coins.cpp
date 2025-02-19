@@ -150,6 +150,15 @@ void AddCoins(CCoinsViewCache& cache, const CTransaction &tx, int nHeight, uint2
                 bool fVerifierChanged = false;
                 std::string strOldVerifier = "";
 
+                // New fields
+                bool fPermanentIPFSChanged = !reissue.strPermanentIPFSHash.empty(); // Empty means it wasn't changed
+                bool fTollAmountChanged = reissue.nTollAmountChanged; // Zero is allowed, so we need to know if this is going to be changed.
+                bool fTollAddressChanged = !reissue.strTollAddress.empty(); // Empty isn't allowed to be set, or shouldn't be so empty here means no change.
+                bool fTollAmountMutabilityChanged = asset.nTollAmountMutability == 1 && reissue.nTollAmountMutability == 0;
+                bool fTollAddressMutabilityChanged = asset.nTollAddressMutability == 1 && reissue.nTollAddressMutability == 0;
+                bool fReissuableChanged = asset.nReissuable == 1 && reissue.nReissuable == 0;
+                bool fRemintableChanged = asset.nRemintable == 1 && reissue.nRemintable == 0;
+
                 // If we are reissuing a restricted asset, we need to check to see if the verifier string is being reissued
                 if (fFoundRestrictedAsset) {
                     CNullAssetTxVerifierString verifier;
@@ -182,9 +191,13 @@ void AddCoins(CCoinsViewCache& cache, const CTransaction &tx, int nHeight, uint2
                 }
 
                 // If any of the following items were changed by reissuing, we need to database the old values so it can be undone correctly
-                if (fIPFSChanged || fUnitsChanged || fVerifierChanged) {
+                if (fIPFSChanged || fUnitsChanged || fVerifierChanged || fPermanentIPFSChanged || fTollAmountChanged || fTollAddressChanged || fReissuableChanged || fRemintableChanged) {
+                    int8_t nVersion = ASSET_UNDO_INCLUDES_VERIFIER_STRING;
+                    if (IsTollsActive()) {
+                        nVersion = ASSET_UNDO_INCLUDES_TOLL_FIELDS;
+                    }
                     undoAssetData->first = reissue.strName; // Asset Name
-                    undoAssetData->second = CBlockAssetUndo {fIPFSChanged, fUnitsChanged, asset.strIPFSHash, asset.units, ASSET_UNDO_INCLUDES_VERIFIER_STRING, fVerifierChanged, strOldVerifier}; // ipfschanged, unitchanged, Old Assets IPFSHash, old units
+                    undoAssetData->second = CBlockAssetUndo {fIPFSChanged, fUnitsChanged, asset.strIPFSHash, asset.units, nVersion, fVerifierChanged, strOldVerifier, fPermanentIPFSChanged, fTollAmountMutabilityChanged, fTollAmountChanged, fTollAddressMutabilityChanged, fTollAddressChanged, asset.strPermanentIPFSHash, asset.nTollAmount, asset.strTollAddress, fReissuableChanged, fRemintableChanged};
                 }
             } else if (tx.IsNewUniqueAsset()) {
                 for (int n = 0; n < (int)tx.vout.size(); n++) {
@@ -329,8 +342,8 @@ void AddCoins(CCoinsViewCache& cache, const CTransaction &tx, int nHeight, uint2
                 }
 
                 CScript script = tx.vout[i].scriptPubKey;
-                if (script.IsNullAsset()) {
-                    if (script.IsNullAssetTxDataScript()) {
+                if (script.IsNullAsset(IsTollsActive())) {
+                    if (script.IsNullAssetTxDataScript(IsTollsActive())) {
                         CNullAssetTxData data;
                         std::string address;
                         AssetNullDataFromScript(script, data, address);

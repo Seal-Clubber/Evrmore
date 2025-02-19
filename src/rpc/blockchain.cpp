@@ -1080,7 +1080,7 @@ static void ApplyStats(CCoinsStats &stats, CHashWriter& ss, const uint256& hash,
     ss << hash;
     ss << VARINT(outputs.begin()->second.nHeight * 2 + outputs.begin()->second.fCoinBase);
     stats.nTransactions++;
-    for (const auto output : outputs) {
+    for (const auto& output : outputs) {
         ss << VARINT(output.first + 1);
         ss << output.second.out.scriptPubKey;
         ss << VARINT(output.second.out.nValue);
@@ -1489,7 +1489,7 @@ UniValue getblockchaininfo(const JSONRPCRequest& request)
         }
     }
 
-    //const Consensus::Params& consensusParams = GetParams().GetConsensus();
+    const Consensus::Params& consensusParams = GetParams().GetConsensus();
     //CBlockIndex* tip = chainActive.Tip();
 
     UniValue softforks(UniValue::VARR);
@@ -1499,8 +1499,7 @@ UniValue getblockchaininfo(const JSONRPCRequest& request)
     // softforks.push_back(SoftForkDesc("bip65", 4, tip, consensusParams));
     // BIP9SoftForkDescPushBack(bip9_softforks, "csv", consensusParams, Consensus::DEPLOYMENT_CSV);
     // BIP9SoftForkDescPushBack(bip9_softforks, "segwit", consensusParams, Consensus::DEPLOYMENT_SEGWIT);
-/** When putting a new BIP9 item here, remember to also uncomment the line from above:
-        "const Consensus::Params& consensusParams = GetParams().GetConsensus();" */
+    BIP9SoftForkDescPushBack(bip9_softforks, "toll", consensusParams, Consensus::DEPLOYMENT_TOLL);
     obj.push_back(Pair("softforks",             softforks));
     obj.push_back(Pair("bip9_softforks", bip9_softforks));
 

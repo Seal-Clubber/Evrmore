@@ -124,23 +124,31 @@ bool CAssetsDB::LoadAssets()
 
     // Load assets
     while (pcursor->Valid()) {
-        boost::this_thread::interruption_point();
-        std::pair<char, std::string> key;
-        if (pcursor->GetKey(key) && key.first == ASSET_FLAG) {
-            CDatabasedAssetData data;
-            if (pcursor->GetValue(data)) {
-                passetsCache->Put(data.asset.strName, data);
-                pcursor->Next();
+        try {
+            boost::this_thread::interruption_point();
+            std::pair<char, std::string> key;
+            if (pcursor->GetKey(key) && key.first == ASSET_FLAG) {
+                CDatabasedAssetData data;
+                if (pcursor->GetValue(data)) {
+                    passetsCache->Put(data.asset.strName, data);
+                    if (data.asset.nVersion == TOLL_UPGRADE_VERSION) {
+                        // TODO - REMOVE THIS BEFORE RELEASE
+                        LogPrintf("Found TOLL UPGRADE ASSET %s\n", data.asset.strName);
+                    }
+                    pcursor->Next();
 
-                // Loaded enough from database to have in memory.
-                // No need to load everything if it is just going to be removed from the cache
-                if (passetsCache->Size() == (passetsCache->MaxSize() / 2))
-                    break;
+                    // Loaded enough from database to have in memory.
+                    // No need to load everything if it is just going to be removed from the cache
+                    if (passetsCache->Size() == (passetsCache->MaxSize() / 2))
+                        break;
+                } else {
+                    return error("%s: failed to read asset", __func__);
+                }
             } else {
-                return error("%s: failed to read asset", __func__);
+                break;
             }
-        } else {
-            break;
+        } catch (...) {
+
         }
     }
 

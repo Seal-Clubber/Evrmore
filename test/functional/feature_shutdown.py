@@ -5,7 +5,6 @@
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 """Test evrmored shutdown."""
-
 from threading import Thread
 from test_framework.test_framework import EvrmoreTestFramework
 from test_framework.util import assert_equal, get_rpc_proxy, wait_until

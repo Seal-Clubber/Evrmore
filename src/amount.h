@@ -28,4 +28,10 @@ static const CAmount CENT = 1000000;
 static const CAmount MAX_MONEY = 21000000000 * COIN;
 inline bool MoneyRange(const CAmount& nValue) { return (nValue >= 0 && nValue <= MAX_MONEY); }
 
+// 1 Billion is the max toll amount allowed when calculating the toll
+static const CAmount MAX_TOLL_AMOUNT = 1000000000 * COIN;
+
+// 0.00005000 is the minimum toll amount allowed when calculating the toll
+static const CAmount MIN_TOLL_AMOUNT = 5000;
+
 #endif //  EVRMORE_AMOUNT_H

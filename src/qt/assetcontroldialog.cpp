@@ -647,7 +647,7 @@ void AssetControlDialog::updateView()
     // So we only loop through coins for that specific asset
     auto mapAssetCoins = mapCoins.at(assetToDisplay);
 
-    for (const std::pair<QString, std::vector<COutput>> &coins : mapAssetCoins) {
+    for (const auto& coins : mapAssetCoins) {
         CAssetControlWidgetItem *itemWalletAddress = new CAssetControlWidgetItem();
         itemWalletAddress->setCheckState(COLUMN_CHECKBOX, Qt::Unchecked);
         QString sWalletAddress = coins.first;

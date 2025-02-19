@@ -126,15 +126,15 @@ class BlockchainTest(EvrmoreTestFramework):
         node = self.nodes[0]
         res = node.gettxoutsetinfo()
 
-        assert_equal(res['total_amount'], Decimal('872500.00000000'))
-        assert_equal(res['transactions'], 200)
+        assert_equal(res['total_amount'], Decimal('11733852595.98141464'))
+        assert_equal(res['transactions'], 201)
         assert_equal(res['height'], 200)
-        assert_equal(res['txouts'], 200)
-        assert_equal(res['bogosize'], 17000),
+        assert_equal(res['txouts'], 50203)
+        assert_equal(res['bogosize'], 3765269),
         assert_equal(res['bestblock'], node.getblockhash(200))
         size = res['disk_size']
-        assert size > 6400
-        assert size < 64000
+        assert size > 2000000
+        assert size < 2500000
         assert_equal(len(res['bestblock']), 64)
         assert_equal(len(res['hash_serialized_2']), 64)
 
@@ -143,11 +143,11 @@ class BlockchainTest(EvrmoreTestFramework):
         node.invalidateblock(b1hash)
 
         res2 = node.gettxoutsetinfo()
-        assert_equal(res2['transactions'], 0)
-        assert_equal(res2['total_amount'], Decimal('0'))
+        assert_equal(res2['transactions'], 1)
+        assert_equal(res2['total_amount'], Decimal('11733367834.98141464'))
         assert_equal(res2['height'], 0)
-        assert_equal(res2['txouts'], 0)
-        assert_equal(res2['bogosize'], 0),
+        assert_equal(res2['txouts'], 50003)
+        assert_equal(res2['bogosize'], 3748269),
         assert_equal(res2['bestblock'], node.getblockhash(0))
         assert_equal(len(res2['hash_serialized_2']), 64)
 

@@ -14,6 +14,7 @@
 #include <dbwrapper.h>
 
 const int8_t ASSET_UNDO_INCLUDES_VERIFIER_STRING = -1;
+const int8_t ASSET_UNDO_INCLUDES_TOLL_FIELDS = -2;
 
 class CNewAsset;
 class uint256;
@@ -30,6 +31,18 @@ struct CBlockAssetUndo
     bool fChangedVerifierString;
     std::string verifierString;
 
+    bool fChangedPermanentIPFSHash;
+    bool fChangedTollAmountMutability;
+    bool fChangedTollAmount;
+    bool fChangedTollAddressMutability;
+    bool fChangedTollAddress;
+    std::string strPermanentIPFSHash;
+    CAmount nTollAmount;
+    std::string strTollAddress;
+
+    bool fChangeReissuable;
+    bool fChangedRemintable;
+
     ADD_SERIALIZE_METHODS;
 
     template <typename Stream, typename Operation>
@@ -43,16 +56,46 @@ struct CBlockAssetUndo
                 int8_t nVersionCheck;
                 ::Unserialize(s, nVersionCheck);
 
-                if (nVersionCheck == ASSET_UNDO_INCLUDES_VERIFIER_STRING) {
+                if (nVersionCheck == ASSET_UNDO_INCLUDES_VERIFIER_STRING || nVersionCheck == ASSET_UNDO_INCLUDES_TOLL_FIELDS) {
                     ::Unserialize(s, fChangedVerifierString);
                     ::Unserialize(s, verifierString);
                 }
+
+                // Check for the new version that includes toll fields
+                if (nVersionCheck == ASSET_UNDO_INCLUDES_TOLL_FIELDS) {
+                    ::Unserialize(s, fChangedPermanentIPFSHash);
+                    ::Unserialize(s, fChangedTollAmountMutability);
+                    ::Unserialize(s, fChangedTollAmount);
+                    ::Unserialize(s, fChangedTollAddressMutability);
+                    ::Unserialize(s, fChangedTollAddress);
+                    ::Unserialize(s, strPermanentIPFSHash);
+                    ::Unserialize(s, nTollAmount);
+                    ::Unserialize(s, strTollAddress);
+                    ::Unserialize(s, fChangeReissuable);
+                    ::Unserialize(s, fChangedRemintable);
+                }
+
                 version = nVersionCheck;
             }
         } else {
-            ::Serialize(s, ASSET_UNDO_INCLUDES_VERIFIER_STRING);
-            ::Serialize(s, fChangedVerifierString);
-            ::Serialize(s, verifierString);
+            ::Serialize(s, version);
+            if (version == ASSET_UNDO_INCLUDES_VERIFIER_STRING || version == ASSET_UNDO_INCLUDES_TOLL_FIELDS) {
+                ::Serialize(s, fChangedVerifierString);
+                ::Serialize(s, verifierString);
+            }
+
+            if (version == ASSET_UNDO_INCLUDES_TOLL_FIELDS) {
+                ::Serialize(s, fChangedPermanentIPFSHash);
+                ::Serialize(s, fChangedTollAmountMutability);
+                ::Serialize(s, fChangedTollAmount);
+                ::Serialize(s, fChangedTollAddressMutability);
+                ::Serialize(s, fChangedTollAddress);
+                ::Serialize(s, strPermanentIPFSHash);
+                ::Serialize(s, nTollAmount);
+                ::Serialize(s, strTollAddress);
+                ::Serialize(s, fChangeReissuable);
+                ::Serialize(s, fChangedRemintable);
+            }
         }
     }
 };

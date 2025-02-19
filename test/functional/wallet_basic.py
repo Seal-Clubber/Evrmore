@@ -42,15 +42,15 @@ class WalletTest(EvrmoreTestFramework):
         self.nodes[0].generate(1)
 
         wallet_info = self.nodes[0].getwalletinfo()
-        assert_equal(wallet_info['immature_balance'], 5000)
+        assert_equal(wallet_info['immature_balance'], 2778)
         assert_equal(wallet_info['balance'], 0)
 
         self.sync_all([self.nodes[0:3]])
         self.nodes[1].generate(101)
         self.sync_all([self.nodes[0:3]])
 
-        assert_equal(self.nodes[0].getbalance(), 5000)
-        assert_equal(self.nodes[1].getbalance(), 5000)
+        assert_equal(self.nodes[0].getbalance(), 2778)
+        assert_equal(self.nodes[1].getbalance(), 2778)
         assert_equal(self.nodes[2].getbalance(), 0)
 
         # Check that only first and second nodes have UTXOs
@@ -64,9 +64,9 @@ class WalletTest(EvrmoreTestFramework):
         # First, outputs that are unspent both in the chain and in the
         # mempool should appear with or without include_mempool
         txout = self.nodes[0].gettxout(txid=confirmed_txid, n=confirmed_index, include_mempool=False)
-        assert_equal(txout['value'], 5000)
+        assert_equal(txout['value'], 2778)
         txout = self.nodes[0].gettxout(txid=confirmed_txid, n=confirmed_index, include_mempool=True)
-        assert_equal(txout['value'], 5000)
+        assert_equal(txout['value'], 2778)
         
         # Send 21 EVR from 0 to 2 using sendtoaddress call.
         # Locked memory should use at least 32 bytes to sign each transaction
@@ -81,7 +81,7 @@ class WalletTest(EvrmoreTestFramework):
         # utxo spent in mempool should be visible if you exclude mempool
         # but invisible if you include mempool
         txout = self.nodes[0].gettxout(confirmed_txid, confirmed_index, False)
-        assert_equal(txout['value'], 5000)
+        assert_equal(txout['value'], 2778)
         txout = self.nodes[0].gettxout(confirmed_txid, confirmed_index, True)
         assert txout is None
         # new utxo from mempool should be invisible if you exclude mempool
@@ -116,7 +116,7 @@ class WalletTest(EvrmoreTestFramework):
 
         # node0 should end up with 100 btc in block rewards plus fees, but
         # minus the 21 plus fees sent to node2
-        assert_equal(self.nodes[0].getbalance(), 10000-21)
+        assert_equal(self.nodes[0].getbalance(), 5556-21)
         assert_equal(self.nodes[2].getbalance(), 21)
 
         # Node0 should have two unspent outputs.
@@ -144,8 +144,8 @@ class WalletTest(EvrmoreTestFramework):
         self.sync_all([self.nodes[0:3]])
 
         assert_equal(self.nodes[0].getbalance(), 0)
-        assert_equal(self.nodes[2].getbalance(), 9994)
-        assert_equal(self.nodes[2].getbalance("from1"), 9994-21)
+        assert_equal(self.nodes[2].getbalance(), 5550)
+        assert_equal(self.nodes[2].getbalance("from1"), 5550-21)
 
         # Send 10 EVR normal
         address = self.nodes[0].getnewaddress("test")
@@ -154,7 +154,7 @@ class WalletTest(EvrmoreTestFramework):
         txid = self.nodes[2].sendtoaddress(address, 10, "", "", False)
         self.nodes[2].generate(1)
         self.sync_all([self.nodes[0:3]])
-        node_2_bal = self.check_fee_amount(self.nodes[2].getbalance(), Decimal('9984'), fee_per_byte, count_bytes(self.nodes[2].getrawtransaction(txid)))
+        node_2_bal = self.check_fee_amount(self.nodes[2].getbalance(), Decimal('5540'), fee_per_byte, count_bytes(self.nodes[2].getrawtransaction(txid)))
         assert_equal(self.nodes[0].getbalance(), Decimal('10'))
 
         # Send 10 EVR with subtract fee from amount
@@ -210,7 +210,7 @@ class WalletTest(EvrmoreTestFramework):
         #4. check if recipient (node0) can list the zero value tx
         usp = self.nodes[1].listunspent()
         inputs = [{"txid":usp[0]['txid'], "vout":usp[0]['vout']}]
-        outputs = {self.nodes[1].getnewaddress(): 4999.998, self.nodes[0].getnewaddress(): 1111.11}
+        outputs = {self.nodes[1].getnewaddress(): 2777.998, self.nodes[0].getnewaddress(): 1111.11}
 
         raw_tx = self.nodes[1].createrawtransaction(inputs, outputs)
         raw_tx = raw_tx.replace("c04fbbde19", "0000000000") #replace 1111.11 with 0.0 (int32)

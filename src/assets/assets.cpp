@@ -36,7 +36,7 @@
 #define OFFSET_THREE 3
 #define OFFSET_FOUR 4
 #define OFFSET_TWENTY_THREE 23
-
+#define OFFSET_TWENTY_FOUR 24
 
 std::map<uint256, std::string> mapReissuedTx;
 std::map<std::string, uint256> mapReissuedAssets;
@@ -315,6 +315,11 @@ bool IsAssetNameAnOwner(const std::string& name)
     return IsAssetNameValid(name) && std::regex_match(name, OWNER_INDICATOR);
 }
 
+bool IsAssetNameAUnique(const std::string& name)
+{
+    return IsAssetNameValid(name) && std::regex_match(name, UNIQUE_INDICATOR);
+}
+
 bool IsAssetNameAnRestricted(const std::string& name)
 {
     return IsAssetNameValid(name) && std::regex_match(name, RESTRICTED_INDICATOR);
@@ -449,44 +454,68 @@ bool CNewAsset::IsNull() const
     return strName == "";
 }
 
+bool CNewAsset::IsTollVersion() const
+{
+    return nVersion >= TOLL_UPGRADE_VERSION;
+}
+
+// Copy Constructor
 CNewAsset::CNewAsset(const CNewAsset& asset)
 {
     this->strName = asset.strName;
     this->nAmount = asset.nAmount;
     this->units = asset.units;
-    this->nHasIPFS = asset.nHasIPFS;
     this->nReissuable = asset.nReissuable;
+    this->nHasIPFS = asset.nHasIPFS;
     this->strIPFSHash = asset.strIPFSHash;
+
+    // New fields
+    this->strPermanentIPFSHash = asset.strPermanentIPFSHash;
+    this->nTollAmount = asset.nTollAmount;
+    this->strTollAddress = asset.strTollAddress;
+    this->nTollAmountMutability = asset.nTollAmountMutability;
+    this->nTollAddressMutability = asset.nTollAddressMutability;
+    this->nRemintable = asset.nRemintable;
+    this->nExpiringTime = asset.nExpiringTime;
+    this->nVersion = asset.nVersion;
+
+
+    // Disk only values
+    this->nTotalBurned = asset.nTotalBurned;
+    this->nCurrentlyBurned = asset.nCurrentlyBurned;
 }
 
+// Assignment Operator
 CNewAsset& CNewAsset::operator=(const CNewAsset& asset)
 {
-    this->strName = asset.strName;
-    this->nAmount = asset.nAmount;
-    this->units = asset.units;
-    this->nHasIPFS = asset.nHasIPFS;
-    this->nReissuable = asset.nReissuable;
-    this->strIPFSHash = asset.strIPFSHash;
+    if (this != &asset) // Check for self-assignment
+    {
+        this->strName = asset.strName;
+        this->nAmount = asset.nAmount;
+        this->units = asset.units;
+        this->nReissuable = asset.nReissuable;
+        this->nHasIPFS = asset.nHasIPFS;
+        this->strIPFSHash = asset.strIPFSHash;
+
+        // New fields
+        this->strPermanentIPFSHash = asset.strPermanentIPFSHash;
+        this->nTollAmount = asset.nTollAmount;
+        this->strTollAddress = asset.strTollAddress;
+        this->nTollAddressMutability = asset.nTollAddressMutability;
+        this->nTollAmountMutability = asset.nTollAmountMutability;
+        this->nRemintable = asset.nRemintable;
+        this->nExpiringTime = asset.nExpiringTime;
+        this->nVersion = asset.nVersion;
+
+        // Disk only values
+        this->nTotalBurned = asset.nTotalBurned;
+        this->nCurrentlyBurned = asset.nCurrentlyBurned;
+    }
     return *this;
 }
 
-std::string CNewAsset::ToString()
-{
-    std::stringstream ss;
-    ss << "Printing an asset" << "\n";
-    ss << "name : " << strName << "\n";
-    ss << "amount : " << nAmount << "\n";
-    ss << "units : " << std::to_string(units) << "\n";
-    ss << "reissuable : " << std::to_string(nReissuable) << "\n";
-    ss << "has_ipfs : " << std::to_string(nHasIPFS) << "\n";
-
-    if (nHasIPFS)
-        ss << "ipfs_hash : " << strIPFSHash;
-
-    return ss.str();
-}
-
-CNewAsset::CNewAsset(const std::string& strName, const CAmount& nAmount, const int& units, const int& nReissuable, const int& nHasIPFS, const std::string& strIPFSHash)
+// Constructor with all parameters
+CNewAsset::CNewAsset(const std::string& strName, const CAmount& nAmount, const int& units, const int& nReissuable, const int& nHasIPFS, const std::string& strIPFSHash, const std::string& strPermanentIPFSHash, const CAmount& nTollAmount, const std::string& strTollAddress, const int& nTollAmountMutability, const int& nTollAddressMutability, const int& nRemintable, const uint32_t& nExpiringTime)
 {
     this->SetNull();
     this->strName = strName;
@@ -495,7 +524,48 @@ CNewAsset::CNewAsset(const std::string& strName, const CAmount& nAmount, const i
     this->nReissuable = int8_t(nReissuable);
     this->nHasIPFS = int8_t(nHasIPFS);
     this->strIPFSHash = strIPFSHash;
+
+    // New fields
+    this->strPermanentIPFSHash = strPermanentIPFSHash;
+    this->nTollAmount = nTollAmount;
+    this->strTollAddress = strTollAddress;
+    this->nTollAmountMutability = nTollAmountMutability;
+    this->nTollAddressMutability = nTollAddressMutability;
+    this->nRemintable = nRemintable;
+    this->nExpiringTime = nExpiringTime;
+
+    // Set version to TOLL_UPGRADE_VERSION if any of the new fields are used
+    if (!strPermanentIPFSHash.empty() || nTollAmount > 0 || !strTollAddress.empty() || nRemintable == 1 || nExpiringTime > 0) {
+        this->nVersion = TOLL_UPGRADE_VERSION;
+    } else {
+        this->nVersion = STANDARD_VERSION;
+    }
 }
+
+// Constructor with all parameters
+CNewAsset::CNewAsset(const std::string& strName, const CAmount& nAmount, const int& units, const int& nReissuable, const int& nHasIPFS, const std::string& strIPFSHash)
+{
+    this->SetNull();
+
+    this->strName = strName;
+    this->nAmount = nAmount;
+    this->units = int8_t(units);
+    this->nReissuable = int8_t(nReissuable);
+    this->nHasIPFS = int8_t(nHasIPFS);
+    this->strIPFSHash = strIPFSHash;
+
+    // New fields initialized with defaults because they weren't given
+    this->strPermanentIPFSHash = DEFAULT_IPFS;
+    this->nTollAmount = DEFAULT_TOLL;
+    this->strTollAddress = DEFAULT_TOLL_ADDRESS;
+    this->nTollAmountMutability = int8_t(DEFAULT_TOLL_REISSUABLE);
+    this->nTollAddressMutability = int8_t(DEFAULT_TOLL_REISSUABLE);
+    this->nRemintable = int8_t(DEFAULT_REMINTABLE);
+    this->nExpiringTime = uint32_t(DEFAULT_EXPIRING_TIME);
+    this->nVersion = STANDARD_VERSION;
+}
+
+// Constructor with name and amount only
 CNewAsset::CNewAsset(const std::string& strName, const CAmount& nAmount)
 {
     this->SetNull();
@@ -505,7 +575,67 @@ CNewAsset::CNewAsset(const std::string& strName, const CAmount& nAmount)
     this->nReissuable = int8_t(DEFAULT_REISSUABLE);
     this->nHasIPFS = int8_t(DEFAULT_HAS_IPFS);
     this->strIPFSHash = DEFAULT_IPFS;
+
+    // New fields initialized with defaults
+    this->strPermanentIPFSHash = DEFAULT_IPFS;
+    this->nTollAmount = DEFAULT_TOLL;
+    this->strTollAddress = DEFAULT_TOLL_ADDRESS;
+    this->nTollAmountMutability = int8_t(DEFAULT_TOLL_REISSUABLE);
+    this->nTollAddressMutability = int8_t(DEFAULT_TOLL_REISSUABLE);
+    this->nRemintable = int8_t(DEFAULT_REMINTABLE);
+    this->nExpiringTime = uint32_t(DEFAULT_EXPIRING_TIME);
+    this->nVersion = STANDARD_VERSION;
 }
+
+std::string AssetVersionToString(const uint32_t& nVersion)
+{
+    if (nVersion == STANDARD_VERSION) {
+        return "1";
+    } else if (nVersion == TOLL_UPGRADE_VERSION) {
+        return "2";
+    }
+    else  {
+        return "0";
+    }
+}
+
+// ToString method
+std::string CNewAsset::ToString() const
+{
+    std::stringstream ss;
+    ss << "Printing an asset" << "\n";
+    ss << "version: " << AssetVersionToString(nVersion) << "\n";
+    ss << "name : " << strName << "\n";
+    ss << "amount : " << nAmount << "\n";
+    ss << "units : " << std::to_string(units) << "\n";
+    ss << "reissuable : " << std::to_string(nReissuable) << "\n";
+    ss << "has_ipfs : " << std::to_string(nHasIPFS) << "\n";
+
+    if (nHasIPFS)
+        ss << "ipfs_hash : " << EncodeAssetData(strIPFSHash) << "\n";
+
+    // New fields
+    if (!strPermanentIPFSHash.empty())
+        ss << "permanent_ipfs_hash : " << EncodeAssetData(strPermanentIPFSHash) << "\n";
+
+    ss << "toll_amount_mutability : " << std::to_string(nTollAmountMutability) << "\n";
+
+    if (nTollAmount != 0)
+        ss << "toll_amount : " << nTollAmount << "\n";
+
+    ss << "toll_address_mutability : " << std::to_string(nTollAddressMutability) << "\n";
+
+    if (!strTollAddress.empty())
+        ss << "toll_address : " << strTollAddress << "\n";
+
+    ss << "remintable : " << std::to_string(nRemintable) << "\n";
+
+    if (nExpiringTime > 0)
+        ss << "expiration_time : " << nExpiringTime << "\n";
+
+    return ss.str();
+}
+
 
 CDatabasedAssetData::CDatabasedAssetData(const CNewAsset& asset, const int& nHeight, const uint256& blockHash)
 {
@@ -553,6 +683,80 @@ void CNewAsset::ConstructOwnerTransaction(CScript& script) const
 
     vchMessage.insert(vchMessage.end(), ssOwner.begin(), ssOwner.end());
     script << OP_EVR_ASSET << ToByteVector(vchMessage) << OP_DROP;
+}
+
+CReissueAsset::CReissueAsset(const std::string& strAssetName, const CAmount& nAmount, const int& nUnits, const int& nReissuable, const std::string& strIPFSHash)
+{
+    SetNull();  // Initialize all fields to their default values
+    this->strName = strAssetName;
+    this->nAmount = nAmount;
+    this->nUnits = int8_t(nUnits);
+    this->nReissuable = int8_t(nReissuable);
+    this->strIPFSHash = strIPFSHash;
+
+    // Since no new fields are used, set the version to STANDARD_VERSION
+    // New fields initialized with defaults because they weren't given
+    this->strPermanentIPFSHash = DEFAULT_IPFS;
+    this->nTollAmount = DEFAULT_TOLL;
+    this->strTollAddress = DEFAULT_TOLL_ADDRESS;
+    this->nRemintingAsset = int8_t(DEFAULT_MINTING_ASSET);
+    this->nTollAmountMutability = int8_t(DEFAULT_TOLL_REISSUABLE);
+    this->nTollAddressMutability = int8_t(DEFAULT_TOLL_REISSUABLE);
+    this->nRemintable = int8_t(DEFAULT_REMINTABLE);
+    this->nVersion = STANDARD_VERSION;
+}
+
+CReissueAsset::CReissueAsset(const std::string& strAssetName, const CAmount& nAmount, const int& nRemintable)
+{
+    SetNull();
+    this->strName = strAssetName;
+    this->nAmount = nAmount;
+    this->nRemintingAsset = true;
+    this->nRemintable = nRemintable;
+
+    // This is a remint function so the rest of the fields are unchanged.
+    this->nUnits = UNITS_UNCHANGED;
+    this->nReissuable = int8_t(DEFAULT_REISSUABLE);
+    this->strIPFSHash = DEFAULT_IPFS;
+    this->strPermanentIPFSHash = DEFAULT_IPFS;
+    this->nTollAmountChanged = int8_t(0);
+    this->nTollAmount = DEFAULT_TOLL;
+    this->strTollAddress = DEFAULT_TOLL_ADDRESS;
+    this->nTollAmountMutability = int8_t(DEFAULT_TOLL_REISSUABLE);
+    this->nTollAddressMutability = int8_t(DEFAULT_TOLL_REISSUABLE);
+
+    this->nVersion = TOLL_UPGRADE_VERSION;
+}
+
+// Constructor with all parameters
+CReissueAsset::CReissueAsset(const std::string& strAssetName, const CAmount& nAmount, const int& nUnits, const int& nReissuable,
+              const std::string& strIPFSHash, const std::string& strPermanentIPFSHash, const int& nTollAmountChanged,
+              const CAmount& nTollAmount, const std::string& strTollAddress, const int& nRemintingAsset, const int& nTollAmountMutability, const int& nTollAddressMutability, const int& nRemintable)
+{
+    SetNull();
+    this->strName = strAssetName;
+    this->nAmount = nAmount;
+    this->nUnits = int8_t(nUnits);
+    this->nReissuable = int8_t(nReissuable);
+    this->strIPFSHash = strIPFSHash;
+
+    // Set new fields
+    this->strPermanentIPFSHash = strPermanentIPFSHash;
+    this->nTollAmountChanged = nTollAmountChanged;
+    this->nTollAmount = nTollAmount;
+    this->strTollAddress = strTollAddress;
+    this->nRemintingAsset = nRemintingAsset;
+
+    this->nTollAmountMutability = nTollAmountMutability;
+    this->nTollAddressMutability = nTollAddressMutability;
+    this->nRemintable = nRemintable;
+
+    // Set version to TOLL_UPGRADE_VERSION if any of the new fields are used
+    if (!strPermanentIPFSHash.empty() || nTollAmountChanged || !strTollAddress.empty() || nRemintingAsset == 1 || nTollAmountMutability == 0 || nTollAddressMutability == 0 || nRemintable == 0) {
+        this->nVersion = TOLL_UPGRADE_VERSION;
+    } else {
+        this->nVersion = STANDARD_VERSION;
+    }
 }
 
 bool AssetFromTransaction(const CTransaction& tx, CNewAsset& asset, std::string& strAddress)
@@ -856,7 +1060,7 @@ bool ReissueAssetFromScript(const CScript& scriptPubKey, CReissueAsset& reissue,
 
 bool AssetNullDataFromScript(const CScript& scriptPubKey, CNullAssetTxData& assetData, std::string& strAddress)
 {
-    if (!scriptPubKey.IsNullAssetTxDataScript()) {
+    if (!scriptPubKey.IsNullAssetTxDataScript(IsTollsActive())) {
         return false;
     }
 
@@ -865,8 +1069,17 @@ bool AssetNullDataFromScript(const CScript& scriptPubKey, CNullAssetTxData& asse
 
     strAddress = EncodeDestination(destination);
 
+    int offset = OFFSET_TWENTY_THREE;
+
+    if (IsTollsActive()) {
+        // Only used for P2SH addresses
+        if (scriptPubKey[1] == OP_1NEGATE) {
+            offset = OFFSET_TWENTY_FOUR;
+        }
+    }
+
     std::vector<unsigned char> vchAssetData;
-    vchAssetData.insert(vchAssetData.end(), scriptPubKey.begin() + OFFSET_TWENTY_THREE, scriptPubKey.end());
+    vchAssetData.insert(vchAssetData.end(), scriptPubKey.begin() + offset, scriptPubKey.end());
     CDataStream ssData(vchAssetData, SER_NETWORK, PROTOCOL_VERSION);
 
     try {
@@ -906,12 +1119,42 @@ bool AssetNullVerifierDataFromScript(const CScript& scriptPubKey, CNullAssetTxVe
     }
 
     std::vector<unsigned char> vchAssetData;
-    vchAssetData.insert(vchAssetData.end(), scriptPubKey.begin() + OFFSET_THREE, scriptPubKey.end());
-    CDataStream ssData(vchAssetData, SER_NETWORK, PROTOCOL_VERSION);
 
+    if (IsTollsActive(true)) {
+        // The scripting of verifiers didn't take into account that ToByteVector can add an extra byte of data into the
+        // script if the data being scripted is big enough.
+
+        vchAssetData.clear();
+
+        // We already know OP_EVR_ASSET is in position 0 and OP_RESERVED is in position 1
+        // Because of the IsNullAssetVerifierTxDataScript call above
+        // We start pc at scriptPubKey.begin() + 1 because if OP_EVR_ASSETS is seen in GetOp
+        // It moves the iterator to the end of the script.
+
+        // Initialize the iterator at the start of the script + 1
+        CScript::const_iterator pc = scriptPubKey.begin() + 1;
+        opcodetype opcode;
+
+        if (scriptPubKey.GetOp(pc, opcode) && opcode != OP_RESERVED) {
+            error("Failed to extract verifier data. OP_RESERVED not found");
+            return false;
+        }
+
+        if (!scriptPubKey.GetOp(pc, opcode, vchAssetData)) {
+            error("Failed to extract verifier data");
+            return false;
+        }
+    } else {
+        // TODO - Old code for backwards compatibility while tolls goes live, can be removed once Tolls go live
+        vchAssetData.clear();
+        vchAssetData.insert(vchAssetData.end(), scriptPubKey.begin() + OFFSET_THREE, scriptPubKey.end());
+    }
+
+    // Deserialize the verifier data
+    CDataStream ssData(vchAssetData, SER_NETWORK, PROTOCOL_VERSION);
     try {
         ssData >> verifierData;
-    } catch(std::exception& e) {
+    } catch (std::exception &e) {
         error("Failed to get the verifier string from the stream: %s", e.what());
         return false;
     }
@@ -1494,6 +1737,22 @@ bool CTransaction::VerifyReissueAsset(std::string& strError) const
         asset_name_to_check = reissue.strName.substr(1, reissue.strName.size() -1);
     }
 
+    // If the asset type is unique, remove the #ASSETNAME from the string, so we can check for the correct owner token transfer
+    if (asset_type == AssetType::UNIQUE) {
+        size_t pos = reissue.strName.find_last_of(UNIQUE_TAG_DELIMITER);
+        if (pos != std::string::npos) {
+            asset_name_to_check = reissue.strName.substr(0, pos);  // Extract everything before '#'
+        } else {
+            asset_name_to_check = reissue.strName;  // No '#' found, keep original
+        }
+
+        if (IsAssetNameAUnique(asset_name_to_check) || IsAssetNameAnRestricted(asset_name_to_check)) {
+            strError  = "bad-txns-reissue-unique-no-root-asset-found";
+            return false;
+        }
+    }
+
+
     // Check that there is an asset transfer, this will be the owner asset change
     bool fOwnerOutFound = false;
     for (auto out : vout) {
@@ -1512,12 +1771,34 @@ bool CTransaction::VerifyReissueAsset(std::string& strError) const
         return false;
     }
 
+    // With toll introduced, we have multiple options for the fee.
+    // If amount or units is changed, the cost to reissue isn't changing
+    // If toll is active changing the toll metadata or the ipfs_hash is going to cost much less
+    bool fCheckMetaData = false;
+    bool fCheckRemint = false;
+    if (IsTollsActive()) {
+        fCheckMetaData = reissue.IsMetaDataOnly();
+        fCheckRemint = reissue.IsRemintOnly();
+    }
+
     // Check for the Burn CTxOut in one of the vouts ( This is needed because the change CTxOut is placed in a random position in the CWalletTx
     bool fFoundReissueBurnTx = false;
     for (auto out : vout) {
-        if (CheckReissueBurnTx(out)) {
-            fFoundReissueBurnTx = true;
-            break;
+        if (fCheckMetaData) {
+            if (CheckMetaDataBurnTx(out)) {
+                fFoundReissueBurnTx = true;
+                break;
+            }
+        } else if (fCheckRemint) {
+            if (CheckRemintBurnTx(out)) {
+                fFoundReissueBurnTx = true;
+                break;
+            }
+        } else {
+            if (CheckReissueBurnTx(out)) {
+                fFoundReissueBurnTx = true;
+                break;
+            }
         }
     }
 
@@ -1637,17 +1918,6 @@ void CAssetTransfer::ConstructTransaction(CScript& script) const
     script << OP_EVR_ASSET << ToByteVector(vchMessage) << OP_DROP;
 }
 
-CReissueAsset::CReissueAsset(const std::string &strAssetName, const CAmount &nAmount, const int &nUnits, const int &nReissuable,
-                             const std::string &strIPFSHash)
-{
-    SetNull();
-    this->strName = strAssetName;
-    this->strIPFSHash = strIPFSHash;
-    this->nReissuable = int8_t(nReissuable);
-    this->nAmount = nAmount;
-    this->nUnits = nUnits;
-}
-
 void CReissueAsset::ConstructTransaction(CScript& script) const
 {
     CDataStream ssReissue(SER_NETWORK, PROTOCOL_VERSION);
@@ -1668,6 +1938,52 @@ bool CReissueAsset::IsNull() const
     return strName == "" || nAmount < 0;
 }
 
+bool CReissueAsset::IsMetaDataOnly() const
+{
+    // If none of these vales are being changed.
+    // We can say this is a metadata only change.
+    // TODO - Check with team
+    if (nUnits == -1 && nAmount == 0 && nRemintingAsset != 1) {
+        return true;
+    }
+
+    return false;
+}
+
+bool CReissueAsset::IsRemintOnly() const
+{
+    if (nUnits == -1 && nTollAmountChanged == 0 && strTollAddress.empty() && nRemintingAsset == 1 && nAmount > 0) {
+        return true;
+    }
+    return false;
+}
+
+bool CReissueAsset::IsTollVersion() const
+{
+    return nVersion >= TOLL_UPGRADE_VERSION;
+}
+
+std::string CReissueAsset::ToString() const {
+    std::ostringstream oss;
+    oss << "CReissueAsset:\n";
+    oss << "  Name: " << strName << "\n";
+    oss << "  Amount: " << nAmount << "\n";
+    oss << "  Units: " << static_cast<int>(nUnits) << "\n";
+    oss << "  Reissuable: " << static_cast<int>(nReissuable) << "\n";
+    oss << "  IPFS Hash: " << EncodeAssetData(strIPFSHash) << "\n";
+    oss << "  Permanent IPFS Hash: " << EncodeAssetData(strPermanentIPFSHash) << "\n";
+    oss << "  Toll Amount Changed: " << static_cast<int>(nTollAmountChanged) << "\n";
+    oss << "  Toll Amount: " << nTollAmount << "\n";
+    oss << "  Toll Address: " << strTollAddress << "\n";
+    oss << "  Reminting Asset: " << static_cast<int>(nRemintingAsset) << "\n";
+    oss << "  Toll Amount Mutability: " << static_cast<int>(nTollAmountMutability) << "\n";
+    oss << "  Toll Address Mutability: " << static_cast<int>(nTollAddressMutability) << "\n";
+    oss << "  Remintable: " << static_cast<int>(nRemintable) << "\n";
+    oss << "  Version: " << AssetVersionToString(nVersion) << "\n";
+    return oss.str();
+}
+
+
 bool CAssetsCache::AddTransferAsset(const CAssetTransfer& transferAsset, const std::string& address, const COutPoint& out, const CTxOut& txOut)
 {
     AddToAssetBalance(transferAsset.strName, address, transferAsset.nAmount);
@@ -1679,6 +1995,44 @@ bool CAssetsCache::AddTransferAsset(const CAssetTransfer& transferAsset, const s
         setNewTransferAssetsToRemove.erase(newTransfer);
 
     setNewTransferAssetsToAdd.insert(newTransfer);
+
+    // We want to track assets that are sent to the MintBurnAddress
+    if (address == GetParams().BurnMintAddress()) {
+        LogPrintf("Asset being burned to Burn Mint Address. %s : %d\n", transferAsset.strName, transferAsset.nAmount);
+        CNewAsset assetFound;
+        int assetHeight;
+        uint256 assetBlockHash;
+        if (!GetAssetMetaDataIfExists(transferAsset.strName, assetFound, assetHeight, assetBlockHash)) {
+            return error("%s : Fail to get asset meta data. Tracking Burned Asset : %s : Amount: %d", __func__, transferAsset.strName, transferAsset.nAmount);
+        }
+
+        if (assetFound.strName != transferAsset.strName) {
+            return error("%s : Assets name not matching. Tracking Burned Transferred Asset : %s : Asset Found: %s", __func__, transferAsset.strName, assetFound.nAmount);
+        }
+
+        // Emplace will put the tempAsset into the map if it isn't already in it
+        mapReissuedAssetData.emplace(make_pair(transferAsset.strName, assetFound));
+
+        // Get a reference to our asset object in the map
+        CNewAsset& asset = mapReissuedAssetData.at(transferAsset.strName);
+
+        // As burned data is only databased if the asset is a v2 asset.
+        // We need to upgrade the asset version is it is a v1 legacy asset
+        // We need to set its nRemintable flag at this time to mimic current reissuable state.
+        if (!asset.IsTollVersion()) {
+            asset.nVersion = TOLL_UPGRADE_VERSION;
+            asset.nRemintable = asset.nReissuable;
+        }
+
+        asset.nTotalBurned += transferAsset.nAmount;
+        asset.nCurrentlyBurned += transferAsset.nAmount;
+        if (setNewBurnsToRemove.count(newTransfer))
+            setNewBurnsToRemove.erase(newTransfer);
+
+        CAssetCacheNewTransfer updatedTransfer(transferAsset, address, out, assetBlockHash, assetHeight);
+
+        setNewBurnsToAdd.insert(updatedTransfer);
+    }
 
     return true;
 }
@@ -1928,36 +2282,112 @@ bool CAssetsCache::AddReissueAsset(const CReissueAsset& reissue, const std::stri
 {
     auto pair = std::make_pair(reissue.strName, address);
 
-    CNewAsset asset;
+    CNewAsset tempAsset;
     int assetHeight;
     uint256 assetBlockHash;
-    if (!GetAssetMetaDataIfExists(reissue.strName, asset, assetHeight, assetBlockHash))
+    if (!GetAssetMetaDataIfExists(reissue.strName, tempAsset, assetHeight, assetBlockHash))
         return error("%s: Failed to get the original asset that is getting reissued. Asset Name : %s",
                      __func__, reissue.strName);
 
-    // Insert the reissue information into the reissue map
-    if (!mapReissuedAssetData.count(reissue.strName)) {
+    LogPrintf("Received a reissue transaction with hashses: --%s--, --%s--\n", EncodeAssetData(reissue.strIPFSHash), EncodeAssetData(reissue.strPermanentIPFSHash));
+
+    // Emplace will put the tempAsset into the map if it isn't already in it
+    mapReissuedAssetData.emplace(make_pair(reissue.strName, tempAsset));
+
+    // Get a reference to our asset object in the map
+    CNewAsset& asset = mapReissuedAssetData.at(reissue.strName);
+
+    // By default this is false, and will be set in the only if nRemintable is true, and nRemintingAsset is true
+    bool fRemintingAsset = false;
+
+    if (IsTollsActive()) {
+        // If V1 asset with state: Reissuable = 0, IPFS_HASH = not empty,
+        // We must retain the IPFS_HASH history by storing the existing IPFS_HASH as the Permanent IPFS_Hash
+        if(!asset.IsTollVersion() && !asset.nReissuable && !asset.strIPFSHash.empty()) {
+            LogPrintf("V1 Asset being reissued - Changing the existing ipfs hash - which used to be unmodifiable\n");
+            LogPrintf("V1 Asset Name: %s, Old Hash - %s, Setting Permanent to old hash\n");
+
+            // Set permanent to existing ipfshash
+            asset.strPermanentIPFSHash = asset.strIPFSHash;
+
+            // Update asset version, so it is databased correctly when writing to disk
+            asset.nVersion = TOLL_UPGRADE_VERSION;
+        }
+
+        // Legacy assets have remintable set to true by default if they are reissuable
+        if (!asset.IsTollVersion() && asset.nReissuable) {
+            asset.nRemintable = 1;
+
+            // Update asset version, so it is databased correctly when writing to disk
+            asset.nVersion = TOLL_UPGRADE_VERSION;
+        } else if (!asset.IsTollVersion() && !asset.nReissuable) {
+            // Legacy assets have remintable set to false by default if they are not reissuable
+            asset.nRemintable = 0;
+            asset.nVersion = TOLL_UPGRADE_VERSION;
+        }
+
+        // Turns on the ability to always be able to reissue the ipfs_hash even if nReissuable is false
+        if (!reissue.strIPFSHash.empty()) {
+            asset.nHasIPFS = 1;
+            asset.strIPFSHash = reissue.strIPFSHash;
+        }
+
+        // Set the boolean for the other checks
+        if (asset.nRemintable && reissue.nRemintingAsset) {
+            fRemintingAsset = true;
+        }
+
+        if (fRemintingAsset) {
+            asset.nCurrentlyBurned -= reissue.nAmount;
+        }
+
+        // Set the remintable flag
+        if (asset.nRemintable)
+            asset.nRemintable = reissue.nRemintable;
+    }
+
+    if (asset.nReissuable && !fRemintingAsset) {
         asset.nAmount += reissue.nAmount;
         asset.nReissuable = reissue.nReissuable;
         if (reissue.nUnits != -1)
             asset.units = reissue.nUnits;
 
-        if (reissue.strIPFSHash != "") {
+        if (!reissue.strIPFSHash.empty()) {
             asset.nHasIPFS = 1;
             asset.strIPFSHash = reissue.strIPFSHash;
         }
-        mapReissuedAssetData.insert(make_pair(reissue.strName, asset));
-    } else {
-        mapReissuedAssetData.at(reissue.strName).nAmount += reissue.nAmount;
-        mapReissuedAssetData.at(reissue.strName).nReissuable = reissue.nReissuable;
-        if (reissue.nUnits != -1) {
-            mapReissuedAssetData.at(reissue.strName).units = reissue.nUnits;
-        }
-        if (reissue.strIPFSHash != "") {
-            mapReissuedAssetData.at(reissue.strName).nHasIPFS = 1;
-            mapReissuedAssetData.at(reissue.strName).strIPFSHash = reissue.strIPFSHash;
-        }
     }
+
+    // This is always permanent. Only allowed to be changed when it is currently empty
+    // In the case that a V1 asset, that has set reissuable to false, and already has an ipfs hash set.
+    // The permanent hash will be set to the old ipfs hash in the above code to maintain a valid history. So this check will
+    // fail to update to a value that is set in the reissue tx permanent hash field.
+    if (asset.strPermanentIPFSHash.empty() && !reissue.strPermanentIPFSHash.empty()) {
+        asset.strPermanentIPFSHash = reissue.strPermanentIPFSHash;
+
+        // Update asset version, so it is databased correctly when writing to disk
+        asset.nVersion = TOLL_UPGRADE_VERSION;
+    }
+
+    if (asset.nTollAmountMutability && reissue.nTollAmountChanged) {
+        asset.nTollAmount = reissue.nTollAmount;
+    }
+
+    if (asset.nTollAddressMutability && reissue.strTollAddress != "") {
+        asset.strTollAddress = reissue.strTollAddress;
+    }
+
+    LogPrintf("Current mutability flags Amount: %d, Address: %d\n", asset.nTollAmountMutability, asset.nTollAddressMutability);
+    LogPrintf("Changing mutability flags to Amount: %d, Address: %d\n", reissue.nTollAmountMutability, reissue.nTollAddressMutability);
+
+    // Do this last as to not screw up the checks above
+    if (asset.nTollAmountMutability)
+        asset.nTollAmountMutability = reissue.nTollAmountMutability;
+
+    if (asset.nTollAddressMutability)
+        asset.nTollAddressMutability = reissue.nTollAddressMutability;
+
+    LogPrintf("Received asset from reissue transaction with hashses: --%s--, --%s--\n", EncodeAssetData(asset.strIPFSHash), EncodeAssetData(asset.strPermanentIPFSHash));
 
     CAssetCacheReissueAsset reissueAsset(reissue, address, out, assetHeight, assetBlockHash);
 
@@ -1980,7 +2410,7 @@ bool CAssetsCache::AddReissueAsset(const CReissueAsset& reissue, const std::stri
 }
 
 //! Changes Memory Only
-bool CAssetsCache::RemoveReissueAsset(const CReissueAsset& reissue, const std::string address, const COutPoint& out, const std::vector<std::pair<std::string, CBlockAssetUndo> >& vUndoIPFS)
+bool CAssetsCache::RemoveReissueAsset(const CReissueAsset& reissue, const std::string address, const COutPoint& out, const std::vector<std::pair<std::string, CBlockAssetUndo> >& vUndoAssetData)
 {
     auto pair = std::make_pair(reissue.strName, address);
 
@@ -1990,14 +2420,25 @@ bool CAssetsCache::RemoveReissueAsset(const CReissueAsset& reissue, const std::s
     if (!GetAssetMetaDataIfExists(reissue.strName, assetData, height, blockHash))
         return error("%s: Tried undoing reissue of an asset, but that asset didn't exist: %s", __func__, reissue.strName);
 
-    // Change the asset data by undoing what was reissued
-    assetData.nAmount -= reissue.nAmount;
-    assetData.nReissuable = 1;
+    // When tolls goes active. We have mutliple reissuable states to manage, and we need to use the undo data to
+    // revert to the correct state.
+    if (IsTollsActive()) {
+        if (reissue.nRemintingAsset) {
+            assetData.nCurrentlyBurned += reissue.nAmount;
+        } else {
+            // Default reissue undo, so we just subtract the amount that was added when it was reissued
+            assetData.nAmount -= reissue.nAmount;
+        }
+    } else {
+        // Default for undo reissues before tolls go live
+        assetData.nAmount -= reissue.nAmount;
+        assetData.nReissuable = 1;
+    }
 
     bool fVerifierStringChanged = false;
     std::string verifierString = "";
-    // Find the ipfs hash in the undoblock data and restore the ipfs hash to its previous hash
-    for (auto undoItem : vUndoIPFS) {
+    // Find the old asset data in the undoblock data and restore the modified data back
+    for (const auto& undoItem : vUndoAssetData) {
         if (undoItem.first == reissue.strName) {
             if (undoItem.second.fChangedIPFS)
                 assetData.strIPFSHash = undoItem.second.strIPFS;
@@ -2008,8 +2449,43 @@ bool CAssetsCache::RemoveReissueAsset(const CReissueAsset& reissue, const std::s
             if (undoItem.second.fChangedVerifierString) {
                 fVerifierStringChanged = true;
                 verifierString = undoItem.second.verifierString;
-
             }
+
+            // New Fields undoing
+
+            // If changed is true, it means it was changed from 1 to 0.
+            // This is because we can only go in a single direction. 1 -> 0.
+            if (undoItem.second.fChangedTollAmountMutability) {
+                assetData.nTollAmountMutability = 1;
+            }
+
+            // If changed is true, it means it was changed from 1 to 0.
+            if (undoItem.second.fChangedTollAddressMutability) {
+                assetData.nTollAmountMutability = 1;
+            }
+
+            // If changed is true, it means it was changed from a 1 to 0
+            if (undoItem.second.fChangedRemintable) {
+                assetData.nRemintable = 1;
+            }
+
+            // If changed is true, it means it was changed from a 1 to 0
+            if (undoItem.second.fChangeReissuable) {
+                assetData.nReissuable = 1;
+            }
+
+            if (undoItem.second.fChangedPermanentIPFSHash) {
+                assetData.strPermanentIPFSHash = undoItem.second.strPermanentIPFSHash;
+            }
+
+            if (undoItem.second.fChangedTollAmount) {
+                assetData.nTollAmount = undoItem.second.nTollAmount;
+            }
+
+            if (undoItem.second.fChangedTollAddress) {
+                assetData.strTollAddress = undoItem.second.strTollAddress;
+            }
+
             break;
         }
     }
@@ -2093,6 +2569,37 @@ bool CAssetsCache::RemoveTransfer(const CAssetTransfer &transfer, const std::str
         setNewTransferAssetsToAdd.erase(newTransfer);
 
     setNewTransferAssetsToRemove.insert(newTransfer);
+
+    // We want to track assets that are sent to the MintBurnAddress
+    if (address == GetParams().BurnMintAddress()) {
+        LogPrintf("Asset being unburned from Burn Mint Address. %s : %d\n", transfer.strName, transfer.nAmount);
+        CNewAsset assetFound;
+        int assetHeight;
+        uint256 assetBlockHash;
+        if (!GetAssetMetaDataIfExists(transfer.strName, assetFound, assetHeight, assetBlockHash)) {
+            return error("%s : Fail to get asset meta data. Tracking Burned Asset : %s : Amount: %d", __func__, transfer.strName, transfer.nAmount);
+        }
+
+        if (assetFound.strName != transfer.strName) {
+            return error("%s : Assets name not matching. Tracking Burned Transferred Asset : %s : Asset Found: %s", __func__, transfer.strName, assetFound.nAmount);
+        }
+
+        // Emplace will put the tempAsset into the map if it isn't already in it
+        mapReissuedAssetData.emplace(make_pair(transfer.strName, assetFound));
+
+        // Get a reference to our asset object in the map
+        CNewAsset& asset = mapReissuedAssetData.at(transfer.strName);
+
+        asset.nTotalBurned -= transfer.nAmount;
+        asset.nCurrentlyBurned -= transfer.nAmount;
+
+        if (setNewBurnsToAdd.count(newTransfer))
+            setNewBurnsToAdd.erase(newTransfer);
+
+        CAssetCacheNewTransfer updatedTransfer(transfer, address, out, assetBlockHash, assetHeight);
+
+        setNewBurnsToRemove.insert(updatedTransfer);
+    }
 
     return true;
 }
@@ -2492,9 +2999,9 @@ bool CAssetsCache::DumpCacheToDatabase()
         }
 
         for (auto undoReissue : setNewReissueToRemove) {
-            // In the case the the issue and reissue are both being removed
-            // we can skip this call because the removal of the issue should remove all data pertaining the to asset
-            // Fixes the issue where the reissue data will write over the removed asset meta data that was removed above
+            // In the case where the issue and reissue are both being removed
+            // we can skip this call because the removal of the issue should remove all data pertaining to the asset
+            // Fixes the issue where the reissue data will write over the removed asset metadata that was removed above
             CNewAsset asset(undoReissue.reissue.strName, 0);
             CAssetCacheNewAsset testNewAssetCache(asset, "", 0 , uint256());
             if (setNewAssetsToRemove.count(testNewAssetCache)) {
@@ -2741,6 +3248,42 @@ bool CAssetsCache::DumpCacheToDatabase()
 
             if (dirty) {
                 return error("%s : %s", __func__, message);
+            }
+        }
+
+        // When assets are burned to the burn/mint address, we update the metadata to show currently assets burned.
+        for (auto newBurn : setNewBurnsToAdd) {
+            auto asset_name = newBurn.transfer.strName;
+            auto pair = make_pair(asset_name, newBurn.address);
+            if (mapReissuedAssetData.count(asset_name)) {
+                if(!passetsdb->WriteAssetData(mapReissuedAssetData.at(asset_name), newBurn.blockHeight, newBurn.blockHash)) {
+                    dirty = true;
+                    message = "_Failed Writing burned asset data to database";
+                }
+
+                if (dirty) {
+                    return error("%s : %s", __func__, message);
+                }
+
+                passetsCache->Erase(asset_name);
+            }
+        }
+
+        // When undoing a transfer that burned assets to the burn/mint address, we must update metadata again.
+        for (auto undoBurn : setNewBurnsToRemove) {
+            auto asset_name = undoBurn.transfer.strName;
+            auto pair = make_pair(asset_name, undoBurn.address);
+            if (mapReissuedAssetData.count(asset_name)) {
+                if(!passetsdb->WriteAssetData(mapReissuedAssetData.at(asset_name), undoBurn.blockHeight, undoBurn.blockHash)) {
+                    dirty = true;
+                    message = "_Failed undoing new burned asset data to database";
+                }
+
+                if (dirty) {
+                    return error("%s : %s", __func__, message);
+                }
+
+                passetsCache->Erase(asset_name);
             }
         }
 
@@ -2994,6 +3537,18 @@ bool CAssetsCache::Flush()
             }
         }
 
+        for (auto &item : setNewBurnsToAdd) {
+            if (passets->setNewBurnsToRemove.count(item))
+                passets->setNewBurnsToRemove.erase(item);
+            passets->setNewBurnsToAdd.insert(item);
+        }
+
+        for (auto &item : setNewBurnsToRemove) {
+            if (passets->setNewBurnsToAdd.count(item))
+                passets->setNewBurnsToAdd.erase(item);
+            passets->setNewBurnsToRemove.insert(item);
+        }
+
         return true;
 
     } catch (const std::runtime_error& e) {
@@ -3117,6 +3672,50 @@ bool CheckReissueBurnTx(const CTxOut& txOut)
 {
     // Check the first transaction and verify that the correct EVR Amount
     if (txOut.nValue != GetReissueAssetBurnAmount())
+        return false;
+
+    // Extract the destination
+    CTxDestination destination;
+    if (!ExtractDestination(txOut.scriptPubKey, destination))
+        return false;
+
+    // Verify destination is valid
+    if (!IsValidDestination(destination))
+        return false;
+
+    // Check destination address is the correct burn address
+    if (EncodeDestination(destination) != GetParams().ReissueAssetBurnAddress())
+        return false;
+
+    return true;
+}
+
+bool CheckMetaDataBurnTx(const CTxOut& txOut)
+{
+    // Check the first transaction and verify that the correct EVR Amount
+    if (txOut.nValue != GetMetaDataBurnAmount())
+        return false;
+
+    // Extract the destination
+    CTxDestination destination;
+    if (!ExtractDestination(txOut.scriptPubKey, destination))
+        return false;
+
+    // Verify destination is valid
+    if (!IsValidDestination(destination))
+        return false;
+
+    // Check destination address is the correct burn address
+    if (EncodeDestination(destination) != GetParams().ReissueAssetBurnAddress())
+        return false;
+
+    return true;
+}
+
+bool CheckRemintBurnTx(const CTxOut& txOut)
+{
+    // Check the first transaction and verify that the correct EVR Amount
+    if (txOut.nValue != GetRemintingBurnAmount())
         return false;
 
     // Extract the destination
@@ -3634,6 +4233,16 @@ CAmount GetReissueAssetBurnAmount()
     return GetParams().ReissueAssetBurnAmount();
 }
 
+CAmount GetMetaDataBurnAmount()
+{
+    return GetParams().ReissueMetaDataBurnAmount();
+}
+
+CAmount GetRemintingBurnAmount()
+{
+    return GetParams().RemintingBurnAmount();
+}
+
 CAmount GetIssueSubAssetBurnAmount()
 {
     return GetParams().IssueSubAssetBurnAmount();
@@ -3691,6 +4300,10 @@ CAmount GetBurnAmount(const AssetType type)
             return 0;
         case AssetType::REISSUE:
             return GetReissueAssetBurnAmount();
+        case AssetType::REISSUE_METADATA:
+            return GetMetaDataBurnAmount();
+        case AssetType::REMINTING:
+            return GetRemintingBurnAmount();
         case AssetType::QUALIFIER:
             return GetIssueQualifierAssetBurnAmount();
         case AssetType::SUB_QUALIFIER:
@@ -4116,6 +4729,7 @@ bool CreateReissueAssetTransaction(CWallet* pwallet, CCoinControl& coinControl, 
 
     // strip of the first character of the asset name, this is used for restricted assets only
     std::string stripped_asset_name = asset_name.substr(1, asset_name.size() - 1);
+    std::string stripped_unique = asset_name;
 
     // If we are reissuing a restricted asset, check to see if we have the root owner token $TOKEN check for TOKEN!
     if (asset_type == AssetType::RESTRICTED) {
@@ -4123,6 +4737,15 @@ bool CreateReissueAssetTransaction(CWallet* pwallet, CCoinControl& coinControl, 
         if (!VerifyWalletHasAsset(stripped_asset_name + OWNER_TAG, error)) {
             return false;
         }
+    } else if (asset_type == AssetType::UNIQUE) {
+        size_t pos = asset_name.find_last_of(UNIQUE_TAG_DELIMITER);
+        if (pos != std::string::npos) {
+            stripped_unique = asset_name.substr(0, pos);  // Extract everything before '#'
+        }
+        if (!VerifyWalletHasAsset(stripped_unique + OWNER_TAG, error)) {
+            return false;
+        }
+
     } else {
         // Verify that this wallet is the owner for the asset, and get the owner asset outpoint
         if (!VerifyWalletHasAsset(asset_name + OWNER_TAG, error)) {
@@ -4133,8 +4756,18 @@ bool CreateReissueAssetTransaction(CWallet* pwallet, CCoinControl& coinControl, 
     // Check the wallet balance
     CAmount curBalance = pwallet->GetBalance();
 
-    // Get the current burn amount for issuing an asset
+    // Get the current burn amount for reissuing an asset
     CAmount burnAmount = GetReissueAssetBurnAmount();
+
+    // Make sure we use the correct burn amount if we are changing metadata only
+    if (IsTollsActive()) {
+        if (reissueAsset.IsMetaDataOnly()) {
+            burnAmount = GetMetaDataBurnAmount();
+        }
+        else if (reissueAsset.IsRemintOnly()) {
+            burnAmount = GetRemintingBurnAmount();
+        }
+    }
 
     // Check to make sure the wallet has the EVR required by the burnAmount
     if (curBalance < burnAmount) {
@@ -4152,6 +4785,9 @@ bool CreateReissueAssetTransaction(CWallet* pwallet, CCoinControl& coinControl, 
 
     if (asset_type == AssetType::RESTRICTED) {
         CAssetTransfer assetTransfer(stripped_asset_name + OWNER_TAG, OWNER_ASSET_AMOUNT);
+        assetTransfer.ConstructTransaction(scriptTransferOwnerAsset);
+    } else if (asset_type == AssetType::UNIQUE) {
+        CAssetTransfer assetTransfer(stripped_unique + OWNER_TAG, OWNER_ASSET_AMOUNT);
         assetTransfer.ConstructTransaction(scriptTransferOwnerAsset);
     } else {
         CAssetTransfer assetTransfer(asset_name + OWNER_TAG, OWNER_ASSET_AMOUNT);
@@ -4221,7 +4857,6 @@ bool CreateReissueAssetTransaction(CWallet* pwallet, CCoinControl& coinControl, 
     }
     return true;
 }
-
 
 // nullAssetTxData -> Use this for freeze/unfreeze an address or adding a qualifier to an address
 // nullGlobalRestrictionData -> Use this to globally freeze/unfreeze a restricted asset.
@@ -4700,19 +5335,36 @@ bool CAssetsCache::CheckForAddressQualifier(const std::string &qualifier_name, c
 
     setIterator = passets->setNewQualifierAddressToAdd.find(cachedQualifierAddress);
     if (setIterator != passets->setNewQualifierAddressToAdd.end()) {
-        // Return true if we are adding the qualifier, and false if we are removing it
-        return setIterator->type == QualifierType::ADD_QUALIFIER;
+        if (setIterator->type == QualifierType::ADD_QUALIFIER) {
+            return true;
+        } else {
+            // BUG FIX:
+            // This scenario can occur if a tag #TAG is removed from an address in a block, then in a later block
+            // #TAG/#SECOND is added to the address.
+            // If a database event hasn't occurred yet the in memory caches will find that #TAG should be removed from the
+            // address and would normally fail this check. Now we can check for the exact condition where a subqualifier
+            // was added later.
+
+            auto tempChecker = CAssetCacheRootQualifierChecker(qualifier_name, address);
+            if (passets->mapRootQualifierAddressesAdd.count(tempChecker)) {
+                if (passets->mapRootQualifierAddressesAdd.at(tempChecker).size()) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
     }
 
-    auto tempCache = CAssetCacheRootQualifierChecker(qualifier_name, address);
-    if (!fSkipTempCache && mapRootQualifierAddressesAdd.count(tempCache)){
-        if (mapRootQualifierAddressesAdd[tempCache].size()) {
+    auto tempChecker = CAssetCacheRootQualifierChecker(qualifier_name, address);
+    if (!fSkipTempCache && mapRootQualifierAddressesAdd.count(tempChecker)){
+        if (mapRootQualifierAddressesAdd.at(tempChecker).size()) {
             return true;
         }
     }
 
-    if (passets->mapRootQualifierAddressesAdd.count(tempCache)) {
-        if (passets->mapRootQualifierAddressesAdd[tempCache].size()) {
+    if (passets->mapRootQualifierAddressesAdd.count(tempChecker)) {
+        if (passets->mapRootQualifierAddressesAdd.at(tempChecker).size()) {
             return true;
         }
     }
@@ -4725,7 +5377,6 @@ bool CAssetsCache::CheckForAddressQualifier(const std::string &qualifier_name, c
     }
 
     if (prestricteddb) {
-
         // Check for exact qualifier, and add to cache if it exists
         if (prestricteddb->ReadAddressQualifier(address, qualifier_name)) {
             passetsQualifierCache->Put(cachedQualifierAddress.GetHash().GetHex(), 1);
@@ -4740,7 +5391,6 @@ bool CAssetsCache::CheckForAddressQualifier(const std::string &qualifier_name, c
 
     return false;
 }
-
 
 bool CAssetsCache::CheckForAddressRestriction(const std::string &restricted_name, const std::string& address, bool fSkipTempCache)
 {
@@ -5048,9 +5698,6 @@ bool VerifyGlobalRestrictedChange(CAssetsCache& cache, const CNullAssetTxData& d
     return true;
 }
 
-////////////////
-
-
 bool CheckVerifierAssetTxOut(const CTxOut& txout, std::string& strError)
 {
     CNullAssetTxVerifierString verifier;
@@ -5324,6 +5971,13 @@ bool CheckNewAsset(const CNewAsset& asset, std::string& strError)
             strError = _("Invalid parameter: reissuable must be 0");
             return false;
         }
+
+        if (IsTollsActive()) {
+            if (asset.nRemintable != 0) {
+                strError = _("Invalid parameter: remintable must be 0");
+                return false;
+            }
+        }
     }
 
     if (assetType == AssetType::QUALIFIER || assetType == AssetType::SUB_QUALIFIER) {
@@ -5338,6 +5992,12 @@ bool CheckNewAsset(const CNewAsset& asset, std::string& strError)
         if (asset.nReissuable != 0) {
             strError = _("Invalid parameter: reissuable must be 0");
             return false;
+        }
+        if (IsTollsActive()) {
+            if (asset.nRemintable != 0) {
+                strError = _("Invalid parameter: remintable must be 0");
+                return false;
+            }
         }
     }
 
@@ -5366,6 +6026,7 @@ bool CheckNewAsset(const CNewAsset& asset, std::string& strError)
         return false;
     }
 
+
     if (asset.nReissuable != 0 && asset.nReissuable != 1) {
         strError = _("Invalid parameter: reissuable must be 0 or 1");
         return false;
@@ -5374,6 +6035,47 @@ bool CheckNewAsset(const CNewAsset& asset, std::string& strError)
     if (asset.nHasIPFS != 0 && asset.nHasIPFS != 1) {
         strError = _("Invalid parameter: has_ipfs must be 0 or 1.");
         return false;
+    }
+
+    if (asset.nVersion >= TOLL_UPGRADE_VERSION) {
+        if (asset.nTollAmount < 0 || asset.nTollAmount > MAX_MONEY) {
+            strError = _("Invalid parameter: toll amount to large or greater than max money: ") + std::to_string(MAX_MONEY / COIN);
+            return false;
+        }
+
+        if (asset.nTollAmount > 0 && asset.strTollAddress.empty()) {
+            strError = _("Invalid parameter: strTollAddress must be provided if toll amount is being set");
+            return false;
+        }
+
+        if (asset.nTollAmount == 0 && !asset.strTollAddress.empty()) {
+            strError = _("Invalid parameter: strTollAddress being set but toll amount is zero");
+            return false;
+        }
+
+        if (!asset.strTollAddress.empty() && !IsValidDestinationString(asset.strTollAddress)) {
+            strError = _("Invalid parameter: Toll address not a valid Evrmore address");
+            return false;
+        }
+
+        auto isValidReissuable = [](int8_t value) {
+            return value == 0 || value == 1;
+        };
+
+        if (!isValidReissuable(asset.nReissuable) ||
+            !isValidReissuable(asset.nTollAmountMutability) ||
+            !isValidReissuable(asset.nTollAddressMutability) ||
+            !isValidReissuable(asset.nRemintable)) {
+
+            strError = _("Invalid parameter: all reissuable values must be either 0 or 1");
+            return false;
+        }
+
+        if (!asset.strPermanentIPFSHash.empty()) {
+            if (!CheckEncoded(asset.strPermanentIPFSHash, strError)) {
+                return false;
+            }
+        }
     }
 
     return true;
@@ -5388,6 +6090,11 @@ bool ContextualCheckNewAsset(CAssetsCache* assetCache, const CNewAsset& asset, s
 
     if (!CheckNewAsset(asset, strError))
         return false;
+
+    if (!IsTollsActive() && asset.nVersion > STANDARD_VERSION) {
+        strError = _("bad-txns-new-toll-asset-when-tolls-not-active");
+        return false;
+    }
 
     // Check our current cache to see if the asset has been created yet
     if (assetCache->CheckIfAssetExists(asset.strName, true)) {
@@ -5449,10 +6156,27 @@ bool CheckReissueAsset(const CReissueAsset& asset, std::string& strError)
     //    }
     //}
     /// -------- TESTNET ONLY ---------- ///
-//
-//    if (!fSkip && asset.nReissuable != 0 && asset.nReissuable != 1) {
-    if (asset.nReissuable != 0 && asset.nReissuable != 1) {
-        strError = _("Unable to reissue asset: reissuable must be 0 or 1");
+
+    auto isValidReissuable = [](int8_t value) {
+        return value == 0 || value == 1;
+    };
+
+    if (!isValidReissuable(asset.nReissuable) ||
+        !isValidReissuable(asset.nTollAmountMutability) ||
+        !isValidReissuable(asset.nTollAddressMutability) ||
+        !isValidReissuable(asset.nRemintable)) {
+
+        strError = _("Unable to reissue asset: all reissuable and remintable values must be either 0 or 1");
+        return false;
+    }
+
+    if (asset.nTollAmount < 0 || asset.nTollAmount >= MAX_MONEY) {
+        strError = _("Unable to reissue toll amount: tool amount must be 0 or larger");
+        return false;
+    }
+
+    if (!asset.strTollAddress.empty() && !IsValidDestinationString(asset.strTollAddress)) {
+        strError = _("Unable to reissue toll address: address not a valid Evrmore address");
         return false;
     }
 
@@ -5466,34 +6190,141 @@ bool CheckReissueAsset(const CReissueAsset& asset, std::string& strError)
     return true;
 }
 
-bool ContextualCheckReissueAsset(CAssetsCache* assetCache, const CReissueAsset& reissue_asset, std::string& strError, const CTransaction& tx)
+bool ContextualCheckReissueTollAmount(const CNewAsset& prev_asset, const CReissueAsset& reissue_asset, std::string& strError)
 {
-    // We are using this just to get the strAddress
-    CReissueAsset reissue;
-    std::string strAddress;
-    if (!ReissueAssetFromTransaction(tx, reissue, strAddress)) {
-        strError = "bad-txns-reissue-asset-contextual-check";
+    if (!prev_asset.nTollAmountMutability) {
+        strError = _("Unable to reissue toll amount: reissue toll amount is set to false");
         return false;
     }
 
-    // run non contextual checks
-    if (!CheckReissueAsset(reissue_asset, strError))
-        return false;
+    if (reissue_asset.nTollAmountChanged) {
+        if (prev_asset.nTollAmount == 0) {
+            strError = _("Unable to reissue toll amount: amount is already set to zero and can't be changed");
+            return false;
+        }
 
-    // Check previous asset data with the reissuesd data
-    CNewAsset prev_asset;
-    if (!assetCache->GetAssetMetaDataIfExists(reissue_asset.strName, prev_asset)) {
-        strError = _("Unable to reissue asset: asset_name '") + reissue_asset.strName + _("' doesn't exist in the database");
+        if (reissue_asset.nTollAmount < 0 || reissue_asset.nTollAmount > MAX_MONEY) {
+            strError = _("Unable to reissue toll amount: amount is to big or negative");
+            return false;
+        }
+
+        if (reissue_asset.nTollAmount > prev_asset.nTollAmount) {
+            strError = _("Unable to reissue toll amount: amount can't be increased");
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool ContextualCheckReissueTollAddress(const CNewAsset& prev_asset, const CReissueAsset& reissue_asset, std::string& strError)
+{
+    if (!prev_asset.nTollAddressMutability) {
+        strError = _("Unable to reissue toll address: reissue toll address is set to false");
         return false;
     }
 
+    // Not empty means a change is being requested
+    if (!reissue_asset.strTollAddress.empty()) {
+        if (!IsValidDestinationString(reissue_asset.strTollAddress)) {
+            strError = _("Unable to reissue toll address: address is not a valid Evrmore address");
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool ContextualCheckReissueReminting(const CNewAsset& prev_asset, const CReissueAsset& reissue_asset, std::string& strError)
+{
+    // Legacy asset, Current Reissuable: True, Reissue Tx nRemintable: True
+    if (!prev_asset.IsTollVersion() && prev_asset.nReissuable && reissue_asset.nRemintable) {
+        // Skip the nRemintable check because this reissue will be setting it to true
+        LogPrintf("Bypassing Remintable check for Legacy asset %s, because we are upgrading to v2 remintable will be true\n", prev_asset.strName);
+    } else {
+        if (!prev_asset.nRemintable) {
+            strError = _("Unable to remint asset: remintable set to false");
+            return false;
+        }
+    }
+
+    if (reissue_asset.nAmount < 0 || reissue_asset.nAmount > MAX_MONEY) {
+        strError = _("Unable to remint asset: amount is to big or negative");
+        return false;
+    }
+
+    // TODO - Logging - Remove after testing
+    if (reissue_asset.nRemintingAsset)
+        LogPrintf("We are reminting %s : %d. Balances are. Total Burned: %d, Currently Burned: %d\n", reissue_asset.strName, reissue_asset.nAmount, prev_asset.nTotalBurned, prev_asset.nCurrentlyBurned);
+
+    // We only want to do this check if this is calling for a reminting
+    if (reissue_asset.nRemintingAsset && reissue_asset.nAmount > prev_asset.nCurrentlyBurned) {
+        strError = _("Unable to remint asset: reminting amount is greater than what is currently burned");
+        return false;
+    }
+
+    if (!CheckAmountWithUnits(reissue_asset.nAmount, prev_asset.units)) {
+        strError = _("Unable to remint asset: amount must be divisible by the unit assigned to the asset");
+        return false;
+    }
+
+    return true;
+}
+
+bool ContextualCheckReissueVerifierString(CAssetsCache* assetCache, const CNewAsset& prev_asset, const CReissueAsset& reissue_asset, std::string& strError, std::string& strAddress, const CTransaction& tx)
+{
+    CNullAssetTxVerifierString new_verifier;
+    bool fNotFound = false;
+
+    // Try and get the verifier string if it was changed
+    if (!tx.GetVerifierStringFromTx(new_verifier, strError, fNotFound)) {
+        // If it return false for any other reason besides not being found, fail the transaction check
+        if (!fNotFound) {
+            return false;
+        }
+    }
+
+    if (reissue_asset.nAmount > 0) {
+        // If it wasn't found, get the current verifier and validate against it
+        if (fNotFound) {
+            CNullAssetTxVerifierString current_verifier;
+            if (assetCache->GetAssetVerifierStringIfExists(reissue_asset.strName, current_verifier)) {
+                if (!ContextualCheckVerifierString(assetCache, current_verifier.verifier_string, strAddress, strError))
+                    return false;
+            } else {
+                // This should happen, but if it does. The wallet needs to shutdown,
+                // TODO, remove this after restricted assets have been tested in testnet for some time, and this hasn't happened yet. It this has happened. Investigation is required by the dev team
+                error("%s : failed to get verifier string from a restricted asset, this shouldn't happen, database is out of sync. Reindex required. Please report this is to development team asset name: %s, txhash : %s",__func__, reissue_asset.strName, tx.GetHash().GetHex());
+                strError = "failed to get verifier string from a restricted asset, database is out of sync. Reindex required. Please report this is to development team";
+                return false;
+            }
+        } else {
+            if (!ContextualCheckVerifierString(assetCache, new_verifier.verifier_string, strAddress, strError))
+                return false;
+        }
+    }
+
+    return true;
+}
+
+bool ContextualCheckReissueBaseInner(const CNewAsset& prev_asset, const CReissueAsset& reissue_asset, std::string& strError)
+{
     if (!prev_asset.nReissuable) {
         // Check to make sure the asset can be reissued
         strError = _("Unable to reissue asset: reissuable is set to false");
         return false;
     }
 
-    if (prev_asset.nAmount + reissue_asset.nAmount > MAX_MONEY) {
+    bool fRemintingAsset = false;
+    if (IsTollsActive()) {
+        // If we are reminting an asset, the other checks need to know
+        if (reissue_asset.nRemintingAsset) {
+            fRemintingAsset = true;
+        }
+    }
+
+    // If we are reminting assets this check can be skipped, as we aren't adding to the supply
+    if (!fRemintingAsset && (prev_asset.nAmount + reissue_asset.nAmount > MAX_MONEY)) {
         strError = _("Unable to reissue asset: asset_name '") + reissue_asset.strName +
                    _("' the amount trying to reissue is to large");
         return false;
@@ -5510,103 +6341,160 @@ bool ContextualCheckReissueAsset(CAssetsCache* assetCache, const CReissueAsset& 
     }
 
     // Check the ipfs hash
-    if (reissue_asset.strIPFSHash != "" && reissue_asset.strIPFSHash.size() != 34 && (AreMessagesDeployed() && reissue_asset.strIPFSHash.size() != 32)) {
+    if (!reissue_asset.strIPFSHash.empty() && reissue_asset.strIPFSHash.size() != 34 && (AreMessagesDeployed() && reissue_asset.strIPFSHash.size() != 32)) {
         strError = _("Invalid parameter: ipfs_hash must be 34 bytes, Txid must be 32 bytes");
         return false;
     }
 
-    if (reissue_asset.strIPFSHash != "") {
+    if (!reissue_asset.strIPFSHash.empty()) {
         if (!CheckEncoded(reissue_asset.strIPFSHash, strError))
             return false;
     }
-
-    if (IsAssetNameAnRestricted(reissue_asset.strName)) {
-        CNullAssetTxVerifierString new_verifier;
-        bool fNotFound = false;
-
-        // Try and get the verifier string if it was changed
-        if (!tx.GetVerifierStringFromTx(new_verifier, strError, fNotFound)) {
-            // If it return false for any other reason besides not being found, fail the transaction check
-            if (!fNotFound) {
-                return false;
-            }
-        }
-
-        if (reissue_asset.nAmount > 0) {
-            // If it wasn't found, get the current verifier and validate against it
-            if (fNotFound) {
-                CNullAssetTxVerifierString current_verifier;
-                if (assetCache->GetAssetVerifierStringIfExists(reissue_asset.strName, current_verifier)) {
-                    if (!ContextualCheckVerifierString(assetCache, current_verifier.verifier_string, strAddress, strError))
-                        return false;
-                } else {
-                    // This should happen, but if it does. The wallet needs to shutdown,
-                    // TODO, remove this after restricted assets have been tested in testnet for some time, and this hasn't happened yet. It this has happened. Investigation is required by the dev team
-                    error("%s : failed to get verifier string from a restricted asset, this shouldn't happen, database is out of sync. Reindex required. Please report this is to development team asset name: %s, txhash : %s",__func__, reissue_asset.strName, tx.GetHash().GetHex());
-                    strError = "failed to get verifier string from a restricted asset, database is out of sync. Reindex required. Please report this is to development team";
-                    return false;
-                }
-            } else {
-                if (!ContextualCheckVerifierString(assetCache, new_verifier.verifier_string, strAddress, strError))
-                    return false;
-            }
-        }
-    }
-
 
     return true;
 }
 
-bool ContextualCheckReissueAsset(CAssetsCache* assetCache, const CReissueAsset& reissue_asset, std::string& strError)
+bool ContextualCheckReissueBase(CAssetsCache* assetCache, const CNewAsset& prev_asset, const CReissueAsset& reissue_asset, std::string& strError, std::string& strAddress, const CTransaction& tx)
 {
+    if (!ContextualCheckReissueBaseInner(prev_asset, reissue_asset, strError)) {
+        return false;
+    }
+
+    if (IsAssetNameAnRestricted(reissue_asset.strName)) {
+        return ContextualCheckReissueVerifierString(assetCache, prev_asset, reissue_asset, strError, strAddress, tx);
+    }
+
+    return true;
+}
+
+bool ContextualCheckReissueBase(const CNewAsset& prev_asset, const CReissueAsset& reissue_asset, std::string& strError)
+{
+    return ContextualCheckReissueBaseInner(prev_asset, reissue_asset, strError);
+}
+
+bool ContextualCheckReissueAsset(CAssetsCache* assetCache, const CReissueAsset& reissue_asset, std::string& strError, const CTransaction& tx, bool fNoTx) {
+    std::string strAddress;
+    if (!fNoTx) {
+        // We are using this just to get the strAddress
+        CReissueAsset reissue;
+        if (!ReissueAssetFromTransaction(tx, reissue, strAddress)) {
+            strError = "bad-txns-reissue-asset-contextual-check";
+            return false;
+        }
+    }
+
     // run non contextual checks
     if (!CheckReissueAsset(reissue_asset, strError))
         return false;
 
-    // Check previous asset data with the reissuesd data
-    if (assetCache) {
-        CNewAsset prev_asset;
-        if (!assetCache->GetAssetMetaDataIfExists(reissue_asset.strName, prev_asset)) {
-            strError = _("Unable to reissue asset: asset_name '") + reissue_asset.strName +
-                       _("' doesn't exist in the database");
-            return false;
-        }
-
-        if (!prev_asset.nReissuable) {
-            // Check to make sure the asset can be reissued
-            strError = _("Unable to reissue asset: reissuable is set to false");
-            return false;
-        }
-
-        if (prev_asset.nAmount + reissue_asset.nAmount > MAX_MONEY) {
-            strError = _("Unable to reissue asset: asset_name '") + reissue_asset.strName +
-                       _("' the amount trying to reissue is to large");
-            return false;
-        }
-
-        if (!CheckAmountWithUnits(reissue_asset.nAmount, prev_asset.units)) {
-            strError = _("Unable to reissue asset: amount must be divisible by the smaller unit assigned to the asset");
-            return false;
-        }
-
-        if (reissue_asset.nUnits < prev_asset.units && reissue_asset.nUnits != -1) {
-            strError = _("Unable to reissue asset: unit must be larger than current unit selection");
-            return false;
-        }
-    }
-
-    // Check the ipfs hash
-    if (reissue_asset.strIPFSHash != "" && reissue_asset.strIPFSHash.size() != 34 && (AreMessagesDeployed() && reissue_asset.strIPFSHash.size() != 32)) {
-        strError = _("Invalid parameter: ipfs_hash must be 34 bytes, Txid must be 32 bytes");
+    if (!IsTollsActive() && reissue_asset.nVersion > STANDARD_VERSION) {
+        strError = "bad-tx-asset-reissue-tolls-not-active";
         return false;
     }
 
-    if (reissue_asset.strIPFSHash != "") {
-        if (!CheckEncoded(reissue_asset.strIPFSHash, strError))
+    if (!IsTollsActive()) {
+        if (reissue_asset.IsAssetNameUnique()) {
+            strError = _("Unable to reissue unique assets");
             return false;
+        }
     }
 
-    return true;
+    if (IsAssetNameAQualifier(reissue_asset.strName)) {
+        strError = _("Unable to reissue or remint qualifier assets");
+        return false;
+    }
+
+    // Check previous asset data with the reissuesd data
+    CNewAsset prev_asset;
+    if (!assetCache->GetAssetMetaDataIfExists(reissue_asset.strName, prev_asset)) {
+        strError = _("Unable to reissue asset: asset_name '") + reissue_asset.strName + _("' doesn't exist in the database");
+        return false;
+    }
+
+    // Setup error strings
+    std::string strBaseCheck = "";
+    std::string strTollAmountCheck = "";
+    std::string strTollAddressCheck = "";
+    std::string strRemintCheck = "";
+
+    // Check for normal asset values being changed (units, ipfs, asset amount)
+    bool fNormalReissueCheck = false;
+    if (fNoTx) {
+        fNormalReissueCheck = ContextualCheckReissueBase(prev_asset, reissue_asset, strBaseCheck);
+    } else {
+        fNormalReissueCheck = ContextualCheckReissueBase(assetCache, prev_asset, reissue_asset, strBaseCheck, strAddress, tx);
+    }
+
+    // Check for toll amount and address changes
+    bool fTollAmountReissueCheck = ContextualCheckReissueTollAmount(prev_asset, reissue_asset, strTollAmountCheck);
+    bool fTollAddressReissueCheck = ContextualCheckReissueTollAddress(prev_asset, reissue_asset, strTollAddressCheck);
+    bool fRemintingReissueCheck = ContextualCheckReissueReminting(prev_asset, reissue_asset, strRemintCheck);
+
+    // If permanent ipfs hash is empty, it hasn't been set yet, so it can be set to a new hash, check the hash
+    if (prev_asset.strPermanentIPFSHash.empty() && !reissue_asset.strPermanentIPFSHash.empty()) {
+        if (!CheckEncoded(reissue_asset.strPermanentIPFSHash, strError))
+            return false;
+    } else if (!prev_asset.strPermanentIPFSHash.empty() && !reissue_asset.strPermanentIPFSHash.empty()) {
+        strError = _("Unable to reissue permanent ipfs hash, it is already set.");
+        return false;
+    }
+
+    // If any of the above checks are true. We need to check if the others failed because of bad logic in the transaction
+    if (fNormalReissueCheck || fTollAmountReissueCheck || fTollAddressReissueCheck || fRemintingReissueCheck || !reissue_asset.strIPFSHash.empty()) {
+
+        // If Base is reissuable, but it failed its checks, there is a problem with the base logic in the transaction
+        if (!fNormalReissueCheck && prev_asset.nReissuable) {
+            strError = strBaseCheck;
+            return false;
+        }
+
+        // If Toll Amount is reissuable but it failed its checks return false
+        if (!fTollAmountReissueCheck && prev_asset.nTollAmountMutability) {
+            strError = strTollAmountCheck;
+            return false;
+        }
+
+        // If Toll Address is reissuable but it failed its checks return false
+        if (!fTollAddressReissueCheck && prev_asset.nTollAddressMutability) {
+            strError = strTollAddressCheck;
+            return false;
+        }
+
+        // If asset is remintable, but it failed its checks, there is a problem with the base logic in the transactions
+        if (!fRemintingReissueCheck && prev_asset.nRemintable) {
+            strError = strRemintCheck;
+            return false;
+        }
+
+        // If asset is not remintable, enforce the remintflag must be false
+        if (reissue_asset.nRemintingAsset && !prev_asset.nRemintable) {
+            strError = _("Invalid parameter: reminting_asset flag must be false if asset in not remintable");
+            return false;
+        }
+
+        // Now that IPFS hash can always be changed, we need to check it directly.
+        if (!reissue_asset.strIPFSHash.empty() && reissue_asset.strIPFSHash.size() != 34 && reissue_asset.strIPFSHash.size() != 32) {
+            strError = _("Invalid parameter: ipfs_hash must be 34 bytes, Txid must be 32 bytes");
+            return false;
+        }
+
+        if (!reissue_asset.strIPFSHash.empty()) {
+            if (!CheckEncoded(reissue_asset.strIPFSHash, strError))
+                return false;
+        }
+
+        return true;
+    }
+
+    // If we get here, we failed somewhere. Report known errors strings and return false.
+    strError = "Base: " + strBaseCheck + " | " + "Amount: " + strTollAmountCheck + " | " + "Address: " + strTollAddressCheck + " | " + "Mint: " + strRemintCheck;
+    return false;
+}
+
+bool ContextualCheckReissueAsset(CAssetsCache* assetCache, const CReissueAsset& reissue_asset, std::string& strError)
+{
+    CTransaction tx;
+    return ContextualCheckReissueAsset(assetCache, reissue_asset, strError, tx, true);
 }
 
 bool ContextualCheckUniqueAssetTx(CAssetsCache* assetCache, std::string& strError, const CTransaction& tx)
@@ -5637,6 +6525,122 @@ bool ContextualCheckUniqueAsset(CAssetsCache* assetCache, const CNewAsset& uniqu
 
     return true;
 }
+
+CAmount CalculateToll(const CAmount sentAmount, const CAmount tollAmount)
+{
+    if (tollAmount >= COIN) {
+        // Check if tollAmount is too large to safely multiply with sentAmount
+        if (sentAmount > (MAX_TOLL_AMOUNT / (tollAmount / COIN))) {
+            return MAX_TOLL_AMOUNT;
+        }
+    }
+
+    if (sentAmount >= COIN) {
+        // Check if sentAmount is too large to safely multiply with tollAmount
+        if (tollAmount > (MAX_TOLL_AMOUNT / (sentAmount / COIN))) {
+            return MAX_TOLL_AMOUNT;
+        }
+    }
+
+    CAmount totalToll = MIN_TOLL_AMOUNT;
+
+    // Dealing with both amounts being smaller than coin
+    // Max value is 99999999 * 99999999 = 9.9999998e+15 which is less than max CAmount 9.22e+18 so no overflow
+    if (sentAmount < COIN && tollAmount < COIN) {
+        totalToll = (sentAmount * tollAmount) / COIN;
+    } else if (sentAmount < COIN) {
+        // Case: Large tollAmount
+        // Split the calculation to avoid overflow
+        int64_t tollScaled = static_cast<int64_t>(tollAmount) / COIN;
+        int64_t fractionalPart = static_cast<int64_t>(tollAmount) % COIN;
+
+        totalToll = ((fractionalPart * sentAmount) / COIN) + ((tollScaled * sentAmount));
+    } else if (tollAmount < COIN) {
+        // Case: Large sentAmount
+        // Split the calculation to avoid overflow
+        int64_t sentScaled = static_cast<int64_t>(sentAmount) / COIN;
+        int64_t fractionalPart = static_cast<int64_t>(sentAmount) % COIN;
+
+        totalToll = ((fractionalPart * tollAmount) / COIN) + (sentScaled * tollAmount);
+    } else {
+        // Case: Both are Large meaning > COIN
+        int64_t tollScaled = static_cast<int64_t>(tollAmount) / COIN;
+        int64_t tollFractionalPart = static_cast<int64_t>(tollAmount) % COIN;
+
+        int64_t sentScaled = static_cast<int64_t>(sentAmount) / COIN;
+        int64_t sentFractionalPart = static_cast<int64_t>(sentAmount) % COIN;
+
+        // Combine results
+        totalToll = (sentScaled * tollScaled * COIN) // Scaled part
+                    + ((sentScaled * tollFractionalPart)) // Sent integer part × Toll fractional part
+                    + ((tollScaled * sentFractionalPart)) // Toll integer part × Sent fractional part
+                    + ((sentFractionalPart * tollFractionalPart) / COIN); // Fractional part × Fractional part
+    }
+
+    if (totalToll > MAX_TOLL_AMOUNT) {
+        totalToll = MAX_TOLL_AMOUNT;
+    }
+
+    if (totalToll < MIN_TOLL_AMOUNT) {
+        totalToll = MIN_TOLL_AMOUNT;
+    }
+
+    return totalToll;
+}
+
+bool HandleTollAssetChange(
+        const std::pair<std::string, CAmount>& assetChange,
+        const std::map<CTxDestination, std::vector<CAssetTollTracker>>& mapAssetTollInputAmounts,
+        CMutableTransaction& txNew,
+        CAssetsCache* passets,
+        const std::string verifier)
+{
+    bool isTollAsset = false;
+    CTxDestination changeDestination;
+
+    // Loop through mapAssetTollInputAmounts to find the originating address for the asset if it has a toll
+    for (const auto& [destination, tollAssets] : mapAssetTollInputAmounts) {
+        for (const auto& tollInfo : tollAssets) {
+            if (tollInfo.assetName == assetChange.first) {
+                isTollAsset = true;
+                changeDestination = destination;
+                break;
+            }
+        }
+        if (isTollAsset) break;
+    }
+
+    if (isTollAsset) {
+        CScript scriptAssetChange = GetScriptForDestination(changeDestination);
+
+        // Check if the asset is a verifier asset validate the change address selected to be the toll change address
+        if (IsAssetNameAnRestricted(assetChange.first)) {
+            // Verify the selected change address meets the verifier requirements
+            std::string check_address = EncodeDestination(changeDestination);
+            std::string failReason = "";
+            if (!ContextualCheckVerifierString(passets, verifier, check_address, failReason)) {
+                LogPrintf("Selected change address does not meet the verifier requirements for the asset: %s\n", failReason);
+                return false;
+            }
+        }
+
+        // Create the asset transfer for the toll asset with the verified or standard change address
+        CAssetTransfer assetTransfer(assetChange.first, assetChange.second);
+        assetTransfer.ConstructTransaction(scriptAssetChange);
+        CTxOut newAssetTxOut(0, scriptAssetChange);
+
+        txNew.vout.emplace_back(newAssetTxOut);
+
+        LogPrintf("Setting change for asset with tolls. %s - %s - %d\n", assetChange.first,
+                  EncodeDestination(changeDestination), assetChange.second);
+        return true;
+    }
+
+    // Log if no toll asset change is required
+    LogPrintf("No toll asset change needed for asset: %s\n", assetChange.first);
+    return false;
+}
+
 
 std::string GetUserErrorString(const ErrorReport& report)
 {

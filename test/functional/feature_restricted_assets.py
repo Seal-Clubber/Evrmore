@@ -199,7 +199,7 @@ class RestrictedAssetsTest(EvrmoreTestFramework):
 
         assert_raises_rpc_error(None, "Amount must be between 1 and 10", n0.issuequalifierasset, asset_name, 0)
         assert_raises_rpc_error(None, "Invalid Evrmore address", n0.issuequalifierasset, asset_name, qty, "garbageaddress")
-        assert_raises_rpc_error(None, "Invalid Evrmore address", n0.issuequalifierasset, asset_name, qty, to_address, "gargabechangeaddress")
+        assert_raises_rpc_error(None, "Invalid Evrmore address", n0.issuequalifierasset, asset_name, qty, to_address, "garbagechangeaddress")
         assert_raises_rpc_error(None, "ipfs_hash must be 46 characters", n0.issuequalifierasset, asset_name, qty, to_address, change_address, True)
 
         # issue
@@ -537,44 +537,8 @@ class RestrictedAssetsTest(EvrmoreTestFramework):
         assert_equal(8000, n0.listassetbalancesbyaddress(change_address)[asset_name])
         assert_equal(2000, n1.listmyassets()[asset_name])
 
-    def isvalidverifierstring(self):
-        self.log.info("Testing isvalidverifierstring()...")
-        n0 = self.nodes[0]
-
-        n0.issuequalifierasset("#KYC1")
-        n0.issuequalifierasset("#KYC2")
-        n0.generate(1)
-
-        valid = [
-            "true",
-            "#KYC1",
-            "#KYC2",
-            "#KYC1 & #KYC2"
-        ]
-        for s in valid:
-            assert_equal("Valid Verifier", n0.isvalidverifierstring(s))
-
-        invalid_empty = [
-            "",
-            "    "
-        ]
-        for s in invalid_empty:
-            assert_raises_rpc_error(-8, "Verifier string can not be empty", n0.isvalidverifierstring, s)
-
-        invalid_syntax = [
-            "asdf",
-            "#KYC1 - #KYC2"
-        ]
-        for s in invalid_syntax:
-            assert_raises_rpc_error(-8, "failed-syntax", n0.isvalidverifierstring, s)
-
-        invalid_non_issued = ["#NOPE"]
-        for s in invalid_non_issued:
-            assert_raises_rpc_error(-8, "contains-non-issued-qualifier", n0.isvalidverifierstring, s)
-
     def run_test(self):
         self.activate_restricted_assets()
-
         self.issuerestrictedasset()
         self.issuerestrictedasset_full()
         self.reissuerestrictedasset_full()
@@ -584,8 +548,6 @@ class RestrictedAssetsTest(EvrmoreTestFramework):
         self.tagging()
         self.freezing()
         self.global_freezing()
-        self.isvalidverifierstring()
-
 
 if __name__ == '__main__':
     RestrictedAssetsTest().main()

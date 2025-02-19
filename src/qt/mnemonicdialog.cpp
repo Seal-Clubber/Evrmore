@@ -248,6 +248,9 @@ void MnemonicDialog3::on_acceptButton_clicked()
         return;
     }
 
+    // boolean for triggering a rescan of the wallet once it is imported
+    fJustImportedExistingMnemonic = true;
+
     Q_EMIT allCloseRequested();
 };
 

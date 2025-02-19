@@ -13,9 +13,15 @@
 #include "amount.h"
 #include "script/standard.h"
 #include "primitives/transaction.h"
+#include <iostream>
+#include <regex>
 
 #define MAX_UNIT 8
 #define MIN_UNIT 0
+
+const uint32_t STANDARD_VERSION = 0xABCDEF00;
+const uint32_t TOLL_UPGRADE_VERSION = 0xABCDEF01; // Magic number followed by 01, use 02, 03, etc for future upgrades
+const std::regex UNIQUE_INDICATOR_REGEX(R"(^[^^~#!]+#[^~#!\/]+$)");
 
 class CAssetsCache;
 
@@ -30,9 +36,11 @@ enum class AssetType
     RESTRICTED = 6,
     VOTE = 7,
     REISSUE = 8,
-    OWNER = 9,
-    NULL_ADD_QUALIFIER = 10,
-    INVALID = 11
+    REISSUE_METADATA = 9,
+    REMINTING = 10,
+    OWNER = 11,
+    NULL_ADD_QUALIFIER = 12,
+    INVALID = 13
 };
 
 enum class QualifierType
@@ -57,7 +65,7 @@ const char TXID_NOTIFIER = 0x54;
 const char IPFS_SHA2_256_LEN = 0x20;
 
 template <typename Stream, typename Operation>
-bool ReadWriteAssetHash(Stream &s, Operation ser_action, std::string &strIPFSHash)
+bool ReadWriteAssetHashOriginal(Stream &s, Operation ser_action, std::string &strIPFSHash)
 {
     // assuming 34-byte IPFS SHA2-256 decoded hash (0x12, 0x20, 32 more bytes)
     if (ser_action.ForRead())
@@ -95,39 +103,142 @@ bool ReadWriteAssetHash(Stream &s, Operation ser_action, std::string &strIPFSHas
     return false;
 };
 
+template <typename Stream, typename Operation>
+bool ReadWriteAssetHash(Stream &s, Operation ser_action, std::string &strIPFSHash, uint32_t version)
+{
+    if (ser_action.ForRead())
+    {
+        strIPFSHash = "";
+
+        if (!s.empty() && s.size() >= 1) {
+            if (version >= TOLL_UPGRADE_VERSION) {
+                // New format: Read length prefix
+                uint8_t hashLength;
+                ::Unserialize(s, hashLength);
+
+                if (hashLength == 0) {
+                    return true;  // No hash present
+                }
+
+                if (s.size() >= hashLength) {
+                    char _sha2_256;
+                    ::Unserialize(s, _sha2_256);
+                    std::basic_string<char> hash;
+                    ::Unserialize(s, hash);
+
+                    std::ostringstream os;
+
+                    if (_sha2_256 == IPFS_SHA2_256) {
+                        os << IPFS_SHA2_256 << IPFS_SHA2_256_LEN;
+                    }
+
+                    os << hash.substr(0, hashLength - 2);  // Adjust for prefix length
+                    strIPFSHash = os.str();
+                    return true;
+                }
+            } else {
+                // Old format: No length prefix, directly read hash
+                return ReadWriteAssetHashOriginal(s, ser_action, strIPFSHash);
+            }
+        }
+    }
+    else
+    {
+        if (version >= TOLL_UPGRADE_VERSION) {
+            // New format: Serialize with length prefix
+            uint8_t hashLength = static_cast<uint8_t>(strIPFSHash.length());
+            ::Serialize(s, hashLength);
+
+            if (hashLength == 0) {
+                return true;  // No hash present
+            }
+
+            if (hashLength == 34) {
+                ::Serialize(s, IPFS_SHA2_256);
+                ::Serialize(s, strIPFSHash.substr(2));
+                return true;
+            } else if (hashLength == 32) {
+                ::Serialize(s, TXID_NOTIFIER);
+                ::Serialize(s, strIPFSHash);
+                return true;
+            }
+        } else {
+            // Old format: No length prefix, directly read hash
+            return ReadWriteAssetHashOriginal(s, ser_action, strIPFSHash);
+        }
+    }
+    return false;
+}
+
 class CNewAsset
 {
+
+private:
+    bool DoesAssetNameMatchUniqueRegex() {
+        return std::regex_match(strName, UNIQUE_INDICATOR_REGEX);
+    }
+
 public:
-    std::string strName; // MAX 31 Bytes
-    CAmount nAmount;     // 8 Bytes
-    int8_t units;        // 1 Byte
-    int8_t nReissuable;  // 1 Byte
-    int8_t nHasIPFS;     // 1 Byte
-    std::string strIPFSHash; // MAX 40 Bytes
+    std::string strName;              // MAX 31 Bytes
+    CAmount nAmount;                  // 8 Bytes
+    int8_t units;                     // 1 Byte
+    int8_t nReissuable;               // 1 Byte
+    int8_t nHasIPFS;                  // 1 Byte
+    std::string strIPFSHash;          // MAX 40 Bytes
+
+    // New Fields
+    std::string strPermanentIPFSHash; // MAX 40 Bytes
+    CAmount nTollAmount;              // 8 Bytes
+    std::string strTollAddress;       // Toll Address, assume this is a MAX 34-byte string
+    int8_t nTollAmountMutability;     // 1 Byte
+    int8_t nTollAddressMutability;    // 1 Byte
+    uint32_t nExpiringTime;           // Expiring Time field
+    uint32_t nVersion;                // 4 Bytes
+
+    // Burn Mint Assets Totals
+    int8_t nRemintable;               // 1 Byte
+    CAmount nTotalBurned;             // 8 Bytes
+    CAmount nCurrentlyBurned;         // 8 Bytes
 
     CNewAsset()
     {
         SetNull();
     }
 
+    CNewAsset(const std::string& strName, const CAmount& nAmount, const int& units, const int& nReissuable, const int& nHasIPFS, const std::string& strIPFSHash, const std::string& strPermanentIPFSHash, const CAmount& nTollAmount, const std::string& strTollAddress, const int& nTollAmountMutability, const int& nTollAddressMutability, const int& nRemintable, const uint32_t& nExpiringTime = 0);
     CNewAsset(const std::string& strName, const CAmount& nAmount, const int& units, const int& nReissuable, const int& nHasIPFS, const std::string& strIPFSHash);
     CNewAsset(const std::string& strName, const CAmount& nAmount);
 
+    // Copy constructor
     CNewAsset(const CNewAsset& asset);
+
+    // Assignment operator
     CNewAsset& operator=(const CNewAsset& asset);
 
+    // Set default values for all fields
     void SetNull()
     {
-        strName= "";
+        strName = "";
         nAmount = 0;
         units = int8_t(MAX_UNIT);
         nReissuable = int8_t(0);
         nHasIPFS = int8_t(0);
         strIPFSHash = "";
+        strPermanentIPFSHash = "";
+        nTollAmount = 0;
+        strTollAddress = "";
+        nTollAmountMutability = int8_t(0);
+        nTollAddressMutability = int8_t(0);
+        nExpiringTime = uint32_t(0);
+        nVersion = STANDARD_VERSION;
+        nRemintable = int8_t(0);
+        nTotalBurned = 0;
+        nCurrentlyBurned = 0;
     }
 
     bool IsNull() const;
-    std::string ToString();
+    std::string ToString() const;
+    bool IsTollVersion() const;
 
     void ConstructTransaction(CScript& script) const;
     void ConstructOwnerTransaction(CScript& script) const;
@@ -137,13 +248,65 @@ public:
     template <typename Stream, typename Operation>
     inline void SerializationOp(Stream& s, Operation ser_action)
     {
+        HandleVersionSerialization(s, ser_action, nVersion);
+
         READWRITE(strName);
         READWRITE(nAmount);
         READWRITE(units);
         READWRITE(nReissuable);
         READWRITE(nHasIPFS);
+
         if (nHasIPFS == 1) {
-            ReadWriteAssetHash(s, ser_action, strIPFSHash);
+            ReadWriteAssetHash(s, ser_action, strIPFSHash, nVersion);
+        }
+
+        // Handle new fields if the version is at or above the toll upgrade version
+        if (nVersion >= TOLL_UPGRADE_VERSION) {
+            ReadWriteAssetHash(s, ser_action, strPermanentIPFSHash, nVersion);
+            READWRITE(nTollAmount);
+            READWRITE(strTollAddress);
+            READWRITE(nTollAmountMutability);
+            READWRITE(nTollAddressMutability);
+            READWRITE(nRemintable);
+
+            // Only serialize nExpiringTime if the asset is unique
+            if (DoesAssetNameMatchUniqueRegex()) {
+                READWRITE(nExpiringTime);  // Only read/write if it's a unique asset
+            }
+
+            // We don't want to serialize this data when sending assets on the network
+            // So we check to make sure we only serialize this data when it is a disk operation
+            if (s.GetType() & SER_DISK) {
+                READWRITE(nTotalBurned);
+                READWRITE(nCurrentlyBurned);
+            }
+        }
+    }
+
+    template <typename Stream, typename Operation>
+    void HandleVersionSerialization(Stream& s, Operation ser_action, uint32_t& nVersion)
+    {
+        if (ser_action.ForRead()) {
+            try {
+                unsigned int originalReadPos = s.nreadPos();
+                READWRITE(nVersion);
+
+                if (nVersion != TOLL_UPGRADE_VERSION) {
+                    s.Rewind(s.nreadPos() - originalReadPos);
+                    nVersion = STANDARD_VERSION;
+                }
+            } catch (const std::exception& e) {
+                s.Rewind(s.nreadPos());
+                nVersion = STANDARD_VERSION;
+            } catch (...) {
+                s.Rewind(s.nreadPos());
+                nVersion = STANDARD_VERSION;
+            }
+        } else {
+            // Only write the version if it isn't the original
+            if (nVersion >= TOLL_UPGRADE_VERSION) {
+                READWRITE(nVersion);
+            }
         }
     }
 };
@@ -213,7 +376,7 @@ public:
     {
         READWRITE(strName);
         READWRITE(nAmount);
-        bool validIPFS = ReadWriteAssetHash(s, ser_action, message);
+        bool validIPFS = ReadWriteAssetHashOriginal(s, ser_action, message);
         if (validIPFS) {
             if (ser_action.ForRead()) {
                 if (!s.empty() && s.size() >= sizeof(int64_t)) {
@@ -236,12 +399,28 @@ public:
 
 class CReissueAsset
 {
+private:
+    bool DoesAssetNameMatchUniqueRegex() const {
+        return std::regex_match(strName, UNIQUE_INDICATOR_REGEX);
+    }
+
 public:
     std::string strName;
     CAmount nAmount;
     int8_t nUnits;
     int8_t nReissuable;
     std::string strIPFSHash;
+
+    // New fields
+    std::string strPermanentIPFSHash; // MAX 40 Bytes
+    int8_t nTollAmountChanged;         // 1 Byte
+    CAmount nTollAmount;               // 8 Byte
+    std::string strTollAddress;        // Toll Address, MAX 34-byte string
+    int8_t nRemintingAsset;            // 1 Byte
+    int8_t nTollAmountMutability;      // 1 Byte
+    int8_t nTollAddressMutability;     // 1 Byte
+    int8_t nRemintable;                // 1 Byte
+    uint32_t nVersion;                 // 4 Byte
 
     CReissueAsset()
     {
@@ -255,6 +434,17 @@ public:
         nUnits = 0;
         nReissuable = 1;
         strIPFSHash = "";
+
+        // Initialize new fields
+        strPermanentIPFSHash = "";
+        nTollAmountChanged = int8_t(0);
+        nTollAmount = 0;
+        strTollAddress = "";
+        nRemintingAsset = int8_t(0);
+        nTollAmountMutability = 1;
+        nTollAddressMutability = 1;
+        nRemintable = 1;
+        nVersion = STANDARD_VERSION;  // Default to standard version
     }
 
     ADD_SERIALIZE_METHODS;
@@ -262,17 +452,99 @@ public:
     template <typename Stream, typename Operation>
     inline void SerializationOp(Stream& s, Operation ser_action)
     {
+        HandleVersionSerialization(s, ser_action, nVersion);
+
         READWRITE(strName);
         READWRITE(nAmount);
         READWRITE(nUnits);
         READWRITE(nReissuable);
-        ReadWriteAssetHash(s, ser_action, strIPFSHash);
+
+        // Use version to determine if length prefix is present
+        ReadWriteAssetHash(s, ser_action, strIPFSHash, nVersion);
+
+        // When adding new fields for tolls and an additional IPFS hash,
+        // we encountered an issue with the existing ReadWriteAssetHash function.
+        // This function reads the next 33 bytes from the stream if the stream size is > 33,
+        // which worked fine with the original implementation.
+        //
+        // However, when we added a new hash field, a problem arose:
+        // if the original IPFS hash (strIPFSHash) was empty ("") but the stream size was still > 33,
+        // it would incorrectly read the new strPermanentIPFSHash as the strIPFSHash.
+        //
+        // To prevent this, we use the nVersion variable to distinguish between old and new versions
+        // of the transaction. In the new versions, we also add the length of the hash to make sure
+        // the correct data is read.
+
+        if (nVersion >= TOLL_UPGRADE_VERSION) {
+            ReadWriteAssetHash(s, ser_action, strPermanentIPFSHash, nVersion);
+
+            // Serialize toll amount fields if indicated by the flag
+            READWRITE(nTollAmountChanged);
+            if (nTollAmountChanged) {
+                READWRITE(nTollAmount);
+            }
+
+            // Serialize the toll address last to keep separation
+            READWRITE(strTollAddress);
+
+            // If this reissue is performing a reminting
+            READWRITE(nRemintingAsset);
+
+            // Serialize the mutability fields
+            READWRITE(nTollAmountMutability);
+            READWRITE(nTollAddressMutability);
+            READWRITE(nRemintable);
+        }
     }
 
+
+    template <typename Stream, typename Operation>
+    void HandleVersionSerialization(Stream& s, Operation ser_action, uint32_t& nVersion)
+    {
+        if (ser_action.ForRead()) {
+            try {
+                unsigned int originalReadPos = s.nreadPos();
+                READWRITE(nVersion);
+
+                if (nVersion != TOLL_UPGRADE_VERSION) {
+                    s.Rewind(s.nreadPos() - originalReadPos);
+                    nVersion = STANDARD_VERSION;
+                }
+            } catch (const std::exception& e) {
+                s.Rewind(s.nreadPos());
+                nVersion = STANDARD_VERSION;
+            } catch (...) {
+                s.Rewind(s.nreadPos());
+                nVersion = STANDARD_VERSION;
+            }
+        } else {
+            if (nVersion >= TOLL_UPGRADE_VERSION) {
+                READWRITE(nVersion);
+            }
+        }
+    }
+
+
+    // Constructor with all parameters
+    CReissueAsset(const std::string& strAssetName, const CAmount& nAmount, const int& nUnits, const int& nReissuable,
+                  const std::string& strIPFSHash, const std::string& strPermanentIPFSHash, const int& nTollAmountChanged,
+                  const CAmount& nTollAmount, const std::string& strTollAddress, const int& nRemintingAsset, const int& nTollAmountMutability, const int& nTollAddressMutability, const int& nRemintable);
     CReissueAsset(const std::string& strAssetName, const CAmount& nAmount, const int& nUnits, const int& nReissuable, const std::string& strIPFSHash);
+    CReissueAsset(const std::string& strAssetName, const CAmount& nAmount, const int& nRemintable);
+
+
     void ConstructTransaction(CScript& script) const;
     bool IsNull() const;
+    bool IsMetaDataOnly() const;
+    bool IsRemintOnly() const;
+    bool IsTollVersion() const;
+    bool IsAssetNameUnique() const {
+        return DoesAssetNameMatchUniqueRegex();
+    }
+
+    std::string ToString() const;
 };
+
 
 class CNullAssetTxData {
 public:
@@ -384,12 +656,25 @@ struct CAssetCacheNewTransfer
     CAssetTransfer transfer;
     std::string address;
     COutPoint out;
+    uint256 blockHash;
+    int blockHeight;
 
     CAssetCacheNewTransfer(const CAssetTransfer& transfer, const std::string& address, const COutPoint& out)
     {
         this->transfer = transfer;
         this->address = address;
         this->out = out;
+        this->blockHash = uint256();
+        this->blockHeight = 0;
+    }
+
+    CAssetCacheNewTransfer(const CAssetTransfer& transfer, const std::string& address, const COutPoint& out, const uint256& blockHash, const int& blockHeight)
+    {
+        this->transfer = transfer;
+        this->address = address;
+        this->out = out;
+        this->blockHash = blockHash;
+        this->blockHeight = blockHeight;
     }
 
     bool operator<(const CAssetCacheNewTransfer& rhs ) const
@@ -533,6 +818,21 @@ struct CAssetCacheRestrictedVerifiers
     {
         return assetName < rhs.assetName;
     }
+};
+
+struct CAssetTollTracker {
+    std::string assetName;
+    CAmount nSetTollFee;       // Toll fee per asset spent
+    std::string tollAddress;   // Address where the toll is paid
+    CAmount nTotalTollSum;       // Total spent for this asset
+    CAmount nTotalAssetSpent;       // Total spent for this asset
+
+    CAssetTollTracker(const std::string& name, CAmount tollFee, const std::string& address, CAmount totalTollSum, CAmount totalAssetSpent)
+            : assetName(name), nSetTollFee(tollFee), tollAddress(address), nTotalTollSum(totalTollSum), nTotalAssetSpent(totalAssetSpent) {}
+
+    // Default Constructor
+    CAssetTollTracker()
+            : assetName(""), nSetTollFee(0), tollAddress(""), nTotalTollSum(0), nTotalAssetSpent(0) {}
 };
 
 // Least Recently Used Cache

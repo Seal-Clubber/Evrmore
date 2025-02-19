@@ -25,9 +25,16 @@
 #define EVR_O 111
 
 #define DEFAULT_UNITS 0
+#define UNITS_UNCHANGED -1
 #define DEFAULT_REISSUABLE 1
+#define DEFAULT_TOLL_REISSUABLE 1
+#define DEFAULT_REMINTABLE 1
 #define DEFAULT_HAS_IPFS 0
 #define DEFAULT_IPFS ""
+#define DEFAULT_TOLL 0
+#define DEFAULT_TOLL_ADDRESS ""
+#define DEFAULT_MINTING_ASSET 0
+#define DEFAULT_EXPIRING_TIME 0
 #define MIN_ASSET_LENGTH 3
 #define MAX_ASSET_LENGTH 32
 #define OWNER_TAG "!"
@@ -37,6 +44,8 @@
 #define UNIQUE_ASSET_AMOUNT 1 * COIN
 #define UNIQUE_ASSET_UNITS 0
 #define UNIQUE_ASSETS_REISSUABLE 0
+#define UNIQUE_ASSETS_REMINTABLE 0
+#define UNIQUE_ASSETS_TOLL_MUTABILITY 0
 
 #define RESTRICTED_CHAR '$'
 #define QUALIFIER_CHAR '#'
@@ -171,6 +180,10 @@ public :
     std::map<CAssetCacheRootQualifierChecker, std::set<std::string> > mapRootQualifierAddressesAdd;
     std::map<CAssetCacheRootQualifierChecker, std::set<std::string> > mapRootQualifierAddressesRemove;
 
+    //! Burn Mint Tracking Caches
+    std::set<CAssetCacheNewTransfer> setNewBurnsToAdd;
+    std::set<CAssetCacheNewTransfer> setNewBurnsToRemove;
+
     CAssetsCache() : CAssets()
     {
         SetNull();
@@ -218,6 +231,10 @@ public :
         //! Root Qualifier Address Map
         this->mapRootQualifierAddressesAdd = cache.mapRootQualifierAddressesAdd;
         this->mapRootQualifierAddressesRemove = cache.mapRootQualifierAddressesRemove;
+
+        //! Burn Mint Tracking Caches
+        this->setNewBurnsToAdd = cache.setNewBurnsToAdd;
+        this->setNewBurnsToRemove = cache.setNewBurnsToRemove;
     }
 
     CAssetsCache& operator=(const CAssetsCache& cache)
@@ -265,6 +282,10 @@ public :
         this->mapRootQualifierAddressesAdd = cache.mapRootQualifierAddressesAdd;
         this->mapRootQualifierAddressesRemove = cache.mapRootQualifierAddressesRemove;
 
+        //! Burn Mint Tracking Caches
+        this->setNewBurnsToAdd = cache.setNewBurnsToAdd;
+        this->setNewBurnsToRemove = cache.setNewBurnsToRemove;
+
         return *this;
     }
 
@@ -272,7 +293,7 @@ public :
     bool RemoveNewAsset(const CNewAsset& asset, const std::string address);
     bool RemoveTransfer(const CAssetTransfer& transfer, const std::string& address, const COutPoint& out);
     bool RemoveOwnerAsset(const std::string& assetsName, const std::string address);
-    bool RemoveReissueAsset(const CReissueAsset& reissue, const std::string address, const COutPoint& out, const std::vector<std::pair<std::string, CBlockAssetUndo> >& vUndoIPFS);
+    bool RemoveReissueAsset(const CReissueAsset& reissue, const std::string address, const COutPoint& out, const std::vector<std::pair<std::string, CBlockAssetUndo> >& vUndoAssetData);
     bool UndoAssetCoin(const Coin& coin, const COutPoint& out);
     bool RemoveQualifierAddress(const std::string& assetName, const std::string& address, const QualifierType type);
     bool RemoveRestrictedAddress(const std::string& assetName, const std::string& address, const RestrictedType type);
@@ -328,7 +349,7 @@ public :
     //! Write asset cache data to database
     bool DumpCacheToDatabase();
 
-    //! Clear all dirty cache sets, vetors, and maps
+    //! Clear all dirty cache sets, vectors, and maps
     void ClearDirtyCache() {
 
         vUndoAssetAmount.clear();
@@ -363,6 +384,9 @@ public :
 
         mapRootQualifierAddressesAdd.clear();
         mapRootQualifierAddressesRemove.clear();
+
+        setNewBurnsToAdd.clear();
+        setNewBurnsToRemove.clear();
     }
 
    std::string CacheToString() const {
@@ -370,16 +394,20 @@ public :
        return strprintf(
                "vNewAssetsToRemove size : %d, vNewAssetsToAdd size : %d, vNewTransfer size : %d, vSpentAssets : %d\n"
                "setNewQualifierAddressToAdd size : %d, setNewQualifierAddressToRemove size : %d, setNewRestrictedAddressToAdd size : %d\n"
-               "setNewRestrictedAddressToRemove size : %d, setNewRestrictedGlobalToAdd size : %d, setNewRestrictedGlobalToRemove : %d",
+               "setNewRestrictedAddressToRemove size : %d, setNewRestrictedGlobalToAdd size : %d, setNewRestrictedGlobalToRemove : %d\n"
+               "setNewBurnsToAdd size : %d, setNewBurnsToRemove size : %d",
                setNewAssetsToRemove.size(), setNewAssetsToAdd.size(), setNewTransferAssetsToAdd.size(),
                vSpentAssets.size(), setNewQualifierAddressToAdd.size(), setNewQualifierAddressToRemove.size(), setNewRestrictedAddressToAdd.size(),
-               setNewRestrictedAddressToRemove.size(), setNewRestrictedGlobalToAdd.size(), setNewRestrictedGlobalToRemove.size());
+               setNewRestrictedAddressToRemove.size(), setNewRestrictedGlobalToAdd.size(), setNewRestrictedGlobalToRemove.size(),
+               setNewBurnsToAdd.size(), setNewBurnsToRemove.size());
    }
 };
 
 //! Functions to be used to get access to the current burn amount required for specific asset issuance transactions
 CAmount GetIssueAssetBurnAmount();
 CAmount GetReissueAssetBurnAmount();
+CAmount GetMetaDataBurnAmount();
+CAmount GetRemintingBurnAmount();
 CAmount GetIssueSubAssetBurnAmount();
 CAmount GetIssueUniqueAssetBurnAmount();
 CAmount GetIssueMsgChannelAssetBurnAmount();
@@ -406,6 +434,9 @@ bool IsUniqueTagValid(const std::string& tag);
 
 //! Check if an asset is an owner
 bool IsAssetNameAnOwner(const std::string& name);
+
+//! Check if an asset in a unique asset
+bool IsAssetNameAUnique(const std::string& name);
 
 //! Check if an asset is a restricted asset
 bool IsAssetNameAnRestricted(const std::string& name);
@@ -459,9 +490,10 @@ bool GlobalAssetNullDataFromScript(const CScript& scriptPubKey, CNullAssetTxData
 bool CheckIssueBurnTx(const CTxOut& txOut, const AssetType& type, const int numberIssued);
 bool CheckIssueBurnTx(const CTxOut& txOut, const AssetType& type);
 
-// TODO, maybe remove this function and input that check into the CheckIssueBurnTx.
 //! Check to make sure the script contains the reissue burn data
 bool CheckReissueBurnTx(const CTxOut& txOut);
+bool CheckMetaDataBurnTx(const CTxOut& txOut);
+bool CheckRemintBurnTx(const CTxOut& txOut);
 
 //! issue asset scripts to make sure script meets the standards
 bool CheckIssueDataTx(const CTxOut& txOut); // OP_EVRMORE_ASSET EVRQ (That is a Q as in Que not an O)
@@ -519,6 +551,7 @@ bool GetAssetData(const CScript& script, CAssetOutputEntry& data);
 
 bool GetBestAssetAddressAmount(CAssetsCache& cache, const std::string& assetName, const std::string& address);
 
+std::string AssetVersionToString(const uint32_t& nVersion);
 
 //! Decode and Encode IPFS hashes, or OIP hashes
 std::string DecodeAssetData(std::string encoded);
@@ -575,9 +608,20 @@ bool ContextualCheckVerifierAssetTxOut(const CTxOut& txout, CAssetsCache* assetC
 bool ContextualCheckVerifierString(CAssetsCache* cache, const std::string& verifier, const std::string& check_address, std::string& strError, ErrorReport* errorReport = nullptr);
 bool ContextualCheckNewAsset(CAssetsCache* assetCache, const CNewAsset& asset, std::string& strError, bool fCheckMempool = false);
 bool ContextualCheckTransferAsset(CAssetsCache* assetCache, const CAssetTransfer& transfer, const std::string& address, std::string& strError);
-bool ContextualCheckReissueAsset(CAssetsCache* assetCache, const CReissueAsset& reissue_asset, std::string& strError, const CTransaction& tx);
+bool ContextualCheckReissueAsset(CAssetsCache* assetCache, const CReissueAsset& reissue_asset, std::string& strError, const CTransaction& tx, bool fNoTx = false);
 bool ContextualCheckReissueAsset(CAssetsCache* assetCache, const CReissueAsset& reissue_asset, std::string& strError);
 bool ContextualCheckUniqueAssetTx(CAssetsCache* assetCache, std::string& strError, const CTransaction& tx);
 bool ContextualCheckUniqueAsset(CAssetsCache* assetCache, const CNewAsset& unique_asset, std::string& strError);
+bool ContextualCheckReissueBase(CAssetsCache* assetCache, const CNewAsset& prev_asset, const CReissueAsset& reissue_asset, std::string& strError, std::string& strAddress, const CTransaction& tx);
+bool ContextualCheckReissueBase(CAssetsCache* assetCache, const CNewAsset& prev_asset, const CReissueAsset& reissue_asset, std::string& strError);
+bool ContextualCheckReissueBaseInner(const CNewAsset& prev_asset, const CReissueAsset& reissue_asset, std::string& strError);
+bool ContextualCheckReissueVerifierString(CAssetsCache* assetCache, const CNewAsset& prev_asset, const CReissueAsset& reissue_asset, std::string& strError, std::string& strAddress, const CTransaction& tx);
+bool ContextualCheckReissueTollAmount(const CNewAsset& prev_asset, const CReissueAsset& reissue_asset, std::string& strError);
+bool ContextualCheckReissueTollAddress(const CNewAsset& prev_asset, const CReissueAsset& reissue_asset, std::string& strError);
+bool ContextualCheckReissueReminting(const CNewAsset& prev_asset, const CReissueAsset& reissue_asset, std::string& strError);
+
+//// Toll Helper functions
+CAmount CalculateToll(const CAmount sentAmount, const CAmount tollAmount);
+bool HandleTollAssetChange(const std::pair<std::string, CAmount>& assetChange, const std::map<CTxDestination, std::vector<CAssetTollTracker>>& mapAssetTollInputAmounts, CMutableTransaction& txNew, CAssetsCache* passets, const std::string verifier);
 
 #endif //EVRMORECOIN_ASSET_PROTOCOL_H

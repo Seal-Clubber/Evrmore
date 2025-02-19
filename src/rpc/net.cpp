@@ -500,7 +500,7 @@ UniValue getnetworkinfo(const JSONRPCRequest& request)
     UniValue localAddresses(UniValue::VARR);
     {
         LOCK(cs_mapLocalHost);
-        for (const std::pair<CNetAddr, LocalServiceInfo> &item : mapLocalHost)
+        for (const std::pair<const CNetAddr, LocalServiceInfo>& item : mapLocalHost)
         {
             UniValue rec(UniValue::VOBJ);
             rec.push_back(Pair("address", item.first.ToString()));
@@ -508,6 +508,7 @@ UniValue getnetworkinfo(const JSONRPCRequest& request)
             rec.push_back(Pair("score", item.second.nScore));
             localAddresses.push_back(rec);
         }
+
     }
     obj.push_back(Pair("localaddresses", localAddresses));
     obj.push_back(Pair("warnings",       GetWarnings("statusbar")));

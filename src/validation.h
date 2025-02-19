@@ -364,6 +364,9 @@ void UpdateCoins(const CTransaction& tx, CCoinsViewCache& inputs, int nHeight);
 
 void UpdateCoins(const CTransaction& tx, CCoinsViewCache& inputs, CTxUndo& txundo, int nHeight, uint256 blockHash, CAssetsCache* assetCache = nullptr, std::pair<std::string, CBlockAssetUndo>* undoAssetData = nullptr);
 
+/** Improvment Protocols Check Active functions */
+bool IsTollsActive(bool fForceReset = false);
+
 /** Transaction validation functions */
 
 /**

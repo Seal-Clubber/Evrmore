@@ -24,7 +24,7 @@ class AssetTest(EvrmoreTestFramework):
 
         n0.generate(1)
         self.sync_all()
-        n0.generate(431)
+        n0.generate(150)
         self.sync_all()
         #assert_equal("active", n0.getblockchaininfo()['bip9_softforks']['assets']['status'])
 
@@ -39,7 +39,7 @@ class AssetTest(EvrmoreTestFramework):
                  units=4, reissuable=True, has_ipfs=True, ipfs_hash=ipfs_hash)
 
         self.log.info("Waiting for ten confirmations after issue...")
-        n0.generate(10)
+        n0.generate(1)
         self.sync_all()
 
         self.log.info("Checkout getassetdata()...")
@@ -80,7 +80,7 @@ class AssetTest(EvrmoreTestFramework):
         n0.transfer(asset_name="MY_ASSET", qty=200, to_address=address1)
 
         self.log.info("Waiting for ten confirmations after transfer...")
-        n0.generate(10)
+        n0.generate(1)
         self.sync_all()
 
         self.log.info("Checking listmyassets()...")
@@ -120,7 +120,7 @@ class AssetTest(EvrmoreTestFramework):
 
         self.log.info("Waiting for ten confirmations after reissue...")
         self.sync_all()
-        n0.generate(10)
+        n0.generate(1)
         self.sync_all()
 
         self.log.info("Checkout getassetdata()...")
@@ -149,7 +149,7 @@ class AssetTest(EvrmoreTestFramework):
 
         self.sync_all()
         self.log.info("Waiting for ten confirmations after issuesubasset...")
-        n0.generate(10)
+        n0.generate(1)
         self.sync_all()
 
         self.log.info("Checkout getassetdata()...")
@@ -337,7 +337,7 @@ class AssetTest(EvrmoreTestFramework):
         asset_name = "PREC_CHANGES"
         address = n0.getnewaddress()
 
-        n0.issue(asset_name, 10, "", "", 0, True, False)
+        n0.issue(asset_name, 10, "", "", 0, True, False, "", "", 0, "", False, False)
         n0.generate(1)
         assert_equal(0, n0.listassets("*", True)[asset_name]["units"])
 
@@ -345,7 +345,16 @@ class AssetTest(EvrmoreTestFramework):
             n0.reissue(asset_name, 10.0 ** (-i), address, "", True, i + 1)
             n0.generate(1)
             assert_equal(i + 1, n0.listassets("*", True)[asset_name]["units"])
-            assert_raises_rpc_error(-25, "Error: Unable to reissue asset: unit must be larger than current unit selection", n0.reissue, asset_name, 10.0 ** (-i), address, "", True, i)
+            # assert_raises_rpc_error(-25, "Error: Unable to reissue asset: unit must be larger than current unit selection", n0.reissue, asset_name, 10.0 ** (-i), address, "", True, i)
+            try:
+                n0.reissue(asset_name, 10.0 ** (-i), address, "", True, i)
+            except JSONRPCException as e:
+                if "unit must be larger than current unit selection" not in e.error['message']:
+                    raise AssertionError("Expected substring not found:" + e.error['message'])
+            except Exception as e:
+                raise AssertionError("Unexpected exception raised: " + type(e).__name__)
+            else:
+                raise AssertionError("No exception raised")
 
         n0.reissue(asset_name, 0.00000001, address)
         n0.generate(1)

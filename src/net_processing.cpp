@@ -1626,6 +1626,14 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
             return false;
         }
 
+        if (IsTollsActive() && nVersion < TOLLS_BURN_MINT) {
+            LogPrintf("peer=%d using obsolete version %i; disconnecting because peer isn't signalling protocol version for tolls_burn_mint support\n", pfrom->GetId(), nVersion);
+            connman->PushMessage(pfrom, CNetMsgMaker(INIT_PROTO_VERSION).Make(NetMsgType::REJECT, strCommand, REJECT_OBSOLETE,
+                                                                              strprintf("Version must be %d or greater or equal to", TOLLS_BURN_MINT)));
+            pfrom->fDisconnect = true;
+            return false;
+        }
+
         if (nVersion == 10300)
             nVersion = 300;
         if (!vRecv.empty())

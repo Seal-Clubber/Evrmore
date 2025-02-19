@@ -14,7 +14,7 @@ from test_framework.util import (
 from decimal import Decimal
 
 MINER_FUND_RATIO = 10
-MINER_FUND_ADDR = '2MtafNz7A8yycP6eQ3tSP1Z7A5VmAxei894'
+MINER_FUND_ADDR = 'n2rxh4SrVLkzASyxaP3jB6Zf2TEfsPXdMz'
 BLOCK_TIME = 1589544000
 
 class MinerDevFundTest(EvrmoreTestFramework):

@@ -56,6 +56,7 @@ const uint32_t BIP32_HARDENED_KEY_LIMIT = 0x80000000;
 
 std::string my_words;
 std::string my_passphrase;
+bool fJustImportedExistingMnemonic = false;
 
 /**
  * Fees smaller than this (in satoshi) are considered zero fee (for transaction creation)
@@ -1541,6 +1542,12 @@ CPubKey CWallet::GenerateNewSeed()
 	std::string strMnemonic = gArgs.GetArg("-mnemonic", "");
 	// NOTE: default mnemonic passphrase is an empty string
 	std::string strMnemonicPassphrase = gArgs.GetArg("-mnemonicpassphrase", "");
+
+    // If we are creating a wallet from a mnemonic passed in as an argument.
+    // We want to track it so we can rescan the wallet
+    if (!strMnemonic.empty()) {
+        fJustImportedExistingMnemonic = true;
+    }
 
     if (!my_words.empty()) {
         strMnemonic = my_words;
@@ -3273,6 +3280,7 @@ bool CWallet::CreateTransactionAll(const std::vector<CRecipient>& vecSend, CWall
     /** RVN END */
 
     CAmount nValue = 0;
+    CAmount totalTollEstimate = 0;
     std::map<std::string, CAmount> mapAssetValue;
     int nChangePosRequest = nChangePosInOut;
     unsigned int nSubtractFeeFromAmount = 0;
@@ -3292,16 +3300,27 @@ bool CWallet::CreateTransactionAll(const std::vector<CRecipient>& vecSend, CWall
                 }
 
                 mapAssetValue[assetTransfer.strName] += assetTransfer.nAmount;
+
+                // Check for toll and calculate if applicable
+                CNewAsset assetMetaData;
+                if (passets && passets->GetAssetMetaDataIfExists(assetTransfer.strName, assetMetaData)) {
+                    if (assetMetaData.nTollAmount > 0) {
+                        // Calculate toll for this asset based on the transfer amount
+                        CAmount tollForAsset = CalculateToll(assetTransfer.nAmount, assetMetaData.nTollAmount);
+                        totalTollEstimate += tollForAsset;  // Sum up the toll for all assets
+                    }
+                }
             }
         }
         /** RVN END */
 
-        if (nValue < 0 || recipient.nAmount < 0)
+        if (nValue < 0 || recipient.nAmount < 0 || totalTollEstimate < 0)
         {
             strFailReason = _("Transaction amounts must not be negative");
             return false;
         }
         nValue += recipient.nAmount;
+        nValue += totalTollEstimate;
 
         if (recipient.fSubtractFeeFromAmount)
             nSubtractFeeFromAmount++;
@@ -3402,6 +3421,13 @@ bool CWallet::CreateTransactionAll(const std::vector<CRecipient>& vecSend, CWall
             // Start with no fee and loop until there is enough fee
             while (true)
             {
+
+                std::map<CTxDestination, std::vector<CAssetTollTracker>> mapAssetTollInputAmounts;
+
+                // Used to track toll fees so the correct amount of inputs can be selected for the transaction
+                // Address -> List of toll trackers
+                std::map<std::string, std::vector<CAssetTollTracker>> mapOutputToAddressTollTracker;
+
                 std::map<std::string, CAmount> mapAssetsIn;
                 nChangePosInOut = nChangePosRequest;
                 txNew.vin.clear();
@@ -3421,7 +3447,7 @@ bool CWallet::CreateTransactionAll(const std::vector<CRecipient>& vecSend, CWall
 
                     /** RVN START */
                     // Check to see if you need to make an asset data outpoint OP_EVR_ASSET data
-                    if (recipient.scriptPubKey.IsNullAssetTxDataScript()) {
+                    if (recipient.scriptPubKey.IsNullAssetTxDataScript(IsTollsActive())) {
                         assert(txout.nValue == 0);
                         txNew.vout.push_back(txout);
                         continue;
@@ -3455,7 +3481,99 @@ bool CWallet::CreateTransactionAll(const std::vector<CRecipient>& vecSend, CWall
                         return false;
                     }
 
+                    // Add the recipient to the transaction outputs
                     txNew.vout.push_back(txout);
+
+                    /** Check for Asset Toll and Add Track Toll Output if Required */
+                    if (IsScriptTransferAsset(recipient.scriptPubKey)) {
+                        CAssetTransfer assetTransfer;
+                        std::string address;
+                        if (TransferAssetFromScript(recipient.scriptPubKey, assetTransfer, address)) {
+                            // Get asset metadata to check for toll
+                            CNewAsset assetMetaData;
+                            if (passets && passets->GetAssetMetaDataIfExists(assetTransfer.strName, assetMetaData)) {
+                                if (assetMetaData.nTollAmount > 0) {
+
+                                    // Allow assets to be sent to the global burn address without paying a toll.
+                                    if (address != GetParams().GlobalBurnAddress()) {
+
+                                        // Use CalculateToll to get the toll amount required
+                                        CAmount tollRequiredToBePaid = CalculateToll(assetTransfer.nAmount,
+                                                                                     assetMetaData.nTollAmount);
+
+                                        if (tollRequiredToBePaid > 0) {
+                                            //// Sum up initial output tolls by address -> list of tolls by asset
+                                            // Check if the destination exists in the map; if not, initialize it with an empty vector
+                                            if (!mapOutputToAddressTollTracker.count(address)) {
+                                                mapOutputToAddressTollTracker[address] = std::vector<CAssetTollTracker>();
+                                            }
+
+                                            // Search for existing entry for this asset in the destination’s vector
+                                            bool assetFound = false;
+                                            for (auto &tracker: mapOutputToAddressTollTracker[address]) {
+                                                if (tracker.assetName == assetTransfer.strName) {
+                                                    // Asset already exists, so sum up the amounts
+                                                    tracker.nTotalTollSum += tollRequiredToBePaid;
+                                                    tracker.nTotalAssetSpent += assetTransfer.nAmount;
+                                                    assetFound = true;
+                                                    LogPrintf(
+                                                            "Updated tracker for asset: %s, Toll Fee: %d, New Toll Sum: %d,  New Total Asset Spent: %d\n",
+                                                            tracker.assetName, tracker.nSetTollFee,
+                                                            tracker.nTotalTollSum, tracker.nTotalAssetSpent);
+                                                    break;
+                                                }
+                                            }
+
+                                            // If asset was not found, add a new CAssetTollTracker entry to the vector for the destination
+                                            if (!assetFound) {
+                                                LogPrintf(
+                                                        "adding tracker for asset: %s, Toll Fee: %d, New Toll Sum: %d,  New Total Asset Spent: %d\n",
+                                                        assetTransfer.strName, assetMetaData.nTollAmount,
+                                                        tollRequiredToBePaid, assetTransfer.nAmount);
+                                                mapOutputToAddressTollTracker[address].emplace_back(
+                                                        CAssetTollTracker(assetTransfer.strName,
+                                                                          assetMetaData.nTollAmount,
+                                                                          assetMetaData.strTollAddress,
+                                                                          tollRequiredToBePaid, assetTransfer.nAmount));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Sum up toll amount owed for each toll address that requires a toll
+                std::map<std::string, CAmount> mapSumTollAddresses;
+                for (const auto& [address, tollTrackers] : mapOutputToAddressTollTracker) {
+                    // Sum up tolls for each address
+                    for (const auto& tracker : tollTrackers) {
+                        mapSumTollAddresses[tracker.tollAddress] += tracker.nTotalTollSum;
+                    }
+                }
+
+                // Create the txoutput for each toll address owed
+                for (const auto& [address, amount] : mapSumTollAddresses) {
+                    // Ensure the toll amount is valid before proceeding
+                    if (amount > 0) {
+                        // Get the toll destination script
+                        CScript tollScript = GetScriptForDestination(DecodeDestination(address));
+
+                        // Create a toll output and check for dust
+                        CTxOut tollTxOut(amount, tollScript);
+                        if (IsDust(tollTxOut, ::dustRelayFee)) {
+                            strFailReason = _("Toll amount too small to send");
+                            return false;
+                        }
+
+                        // Add the toll output to the transaction
+                        txNew.vout.push_back(tollTxOut);
+
+                        // Log for debugging purposes
+                        LogPrintf("Added toll output: Toll Amount: %d, Toll Address: %s\n",
+                                  amount, address);
+                    }
                 }
 
                 // Choose coins to use
@@ -3480,10 +3598,59 @@ bool CWallet::CreateTransactionAll(const std::vector<CRecipient>& vecSend, CWall
                     /** RVN END */
                 }
 
-                const CAmount nChange = nValueIn - nValueToSelect;
+                CAmount nChange = nValueIn - nValueToSelect;
 
                 /** RVN START */
                 if (AreAssetsDeployed()) {
+                    // Once tolls are live. We need to make sure that change addresses are set correctly so people don't
+                    // end up paying tolls for sending the change back to themselves
+                    for (auto asset: setAssets) {
+                        if (asset.txout.scriptPubKey.IsAssetScript()) {
+                            CAssetOutputEntry outputData;
+                            if (!GetAssetData(asset.txout.scriptPubKey, outputData)) {
+                                strFailReason = _("Failed to get asset data from script. Looking for tolls");
+                                return false;
+                            }
+
+                            if (passets && !IsAssetNameAnOwner(outputData.assetName)) {
+                                CNewAsset assetMetaData;
+                                if (!passets->GetAssetMetaDataIfExists(outputData.assetName, assetMetaData)) {
+                                    strFailReason = _("Failed to get asset metadata. Looking for tolls");
+                                    return false;
+                                }
+
+                                if (assetMetaData.nTollAmount > 0) {
+                                    // Check if the destination exists in the map; if not, initialize it with an empty vector
+                                    if (!mapAssetTollInputAmounts.count(outputData.destination)) {
+                                        mapAssetTollInputAmounts[outputData.destination] = std::vector<CAssetTollTracker>();
+                                    }
+
+                                    // Search for existing entry for this asset in the destination’s vector
+                                    bool assetFound = false;
+                                    for (auto &tracker: mapAssetTollInputAmounts[outputData.destination]) {
+                                        if (tracker.assetName == outputData.assetName) {
+                                            // Asset already exists, so sum up the amounts
+                                            tracker.nTotalAssetSpent += outputData.nAmount;
+                                            assetFound = true;
+                                            break;
+                                        }
+                                    }
+
+                                    // If asset was not found, add a new CAssetTollTracker entry to the vector for the destination
+                                    if (!assetFound) {
+                                        mapAssetTollInputAmounts[outputData.destination].emplace_back(CAssetTollTracker(outputData.assetName, assetMetaData.nTollAmount, assetMetaData.strTollAddress, -1, outputData.nAmount));
+                                    }
+
+                                    // TODO - Remove after testing
+                                    LogPrintf(
+                                            "Creating a tx with an asset that has a toll. Asset: %s, Asset Amount: %d, Toll Address: %s, Change Address : %s\n",
+                                            outputData.assetName, outputData.nAmount, assetMetaData.strTollAddress,
+                                            EncodeDestination(outputData.destination));
+                                }
+                            }
+                        }
+                    }
+
                     // Add the change for the assets
                     std::map<std::string, CAmount> mapAssetChange;
                     for (auto asset : mapAssetValue) {
@@ -3494,16 +3661,16 @@ bool CWallet::CreateTransactionAll(const std::vector<CRecipient>& vecSend, CWall
 
                     for (auto assetChange : mapAssetChange) {
                         if (assetChange.second > 0) {
-                            if (IsAssetNameAnRestricted(assetChange.first))
-                            {
+                            // Check if the asset is restricted
+                            if (IsAssetNameAnRestricted(assetChange.first)) {
                                 // Get the verifier string for the restricted asset
                                 CNullAssetTxVerifierString verifier;
                                 if (!passets->GetAssetVerifierStringIfExists(assetChange.first, verifier)) {
-                                    strFailReason = _("Verifier String for asset trasnfer, not found");
+                                    strFailReason = _("Verifier String for asset transfer not found");
                                     return false;
                                 }
 
-                                // Get the change address
+                                // Get the default change address
                                 CTxDestination dest;
                                 if (!ExtractDestination(assetScriptChange, dest)) {
                                     strFailReason = _("Failed to extract destination from change script");
@@ -3512,10 +3679,11 @@ bool CWallet::CreateTransactionAll(const std::vector<CRecipient>& vecSend, CWall
 
                                 std::string change_address = EncodeDestination(dest);
                                 bool fFoundValueChangeAddress = false;
-                                // Check the verifier string against the change address, if it fails, we will try to send the change back to the same input that created this transaction
+
+                                // Verify the change address against the restricted verifier string
                                 if (!ContextualCheckVerifierString(passets, verifier.verifier_string, change_address, strFailReason)) {
-                                    // Loop through all assets that are inputs into the transaction
-                                    for (auto asset: setAssets) {
+                                    // Loop through all assets that are inputs into the transaction to find the originating address
+                                    for (auto asset : setAssets) {
                                         if (asset.txout.scriptPubKey.IsAssetScript()) {
                                             CAssetOutputEntry outputData;
                                             if (!GetAssetData(asset.txout.scriptPubKey, outputData)) {
@@ -3523,12 +3691,14 @@ bool CWallet::CreateTransactionAll(const std::vector<CRecipient>& vecSend, CWall
                                                 return false;
                                             }
 
-                                            // If the asset names don't match, continue through the set of assets
-                                            if (outputData.assetName != assetChange.first)
+                                            // Check if the asset names match
+                                            if (outputData.assetName != assetChange.first) {
                                                 continue;
+                                            }
 
                                             std::string check_address = EncodeDestination(outputData.destination);
 
+                                            // Check if the originating address is allowed by the verifier string
                                             if (ContextualCheckVerifierString(passets, verifier.verifier_string, check_address, strFailReason)) {
                                                 fFoundValueChangeAddress = true;
 
@@ -3541,10 +3711,37 @@ bool CWallet::CreateTransactionAll(const std::vector<CRecipient>& vecSend, CWall
                                                 txNew.vout.emplace_back(newAssetTxOut);
                                                 break;
                                             }
+
+                                            // HandleTollAssetChange is pretty much doing the same thing as the orginal
+                                            // code above.
+                                            // We are just sending back the change to the originating address
+                                            // This shouldn't need to be changed.
                                         }
                                     }
-                                } else  {
-                                    fFoundValueChangeAddress = true;
+                                } else {
+                                    if (!HandleTollAssetChange(assetChange, mapAssetTollInputAmounts, txNew, passets, verifier.verifier_string)) {
+                                        // The default change address is allowed by the verifier string
+                                        fFoundValueChangeAddress = true;
+                                        CScript scriptAssetChange = assetScriptChange;
+                                        CAssetTransfer assetTransfer(assetChange.first, assetChange.second);
+
+                                        assetTransfer.ConstructTransaction(scriptAssetChange);
+                                        CTxOut newAssetTxOut(0, scriptAssetChange);
+
+                                        txNew.vout.emplace_back(newAssetTxOut);
+                                    } else {
+                                        // Toll change address was selected, and verified
+                                        fFoundValueChangeAddress = true;
+                                    }
+                                }
+                                if (!fFoundValueChangeAddress) {
+                                    strFailReason = _("Failed to find restricted asset change address from inputs");
+                                    return false;
+                                }
+                            } else {
+                                if (!HandleTollAssetChange(assetChange, mapAssetTollInputAmounts, txNew, passets, "")) {
+                                    // If Handle Toll Asset Change is false, there isn't a toll.
+                                    // Add asset change like normal.
                                     CScript scriptAssetChange = assetScriptChange;
                                     CAssetTransfer assetTransfer(assetChange.first, assetChange.second);
 
@@ -3553,18 +3750,62 @@ bool CWallet::CreateTransactionAll(const std::vector<CRecipient>& vecSend, CWall
 
                                     txNew.vout.emplace_back(newAssetTxOut);
                                 }
-                                if (!fFoundValueChangeAddress) {
-                                    strFailReason = _("Failed to find restricted asset change address from inputs");
-                                    return false;
+                            }
+                        }
+                    }
+
+                    // Now that all the outputs have been included into the transaction for assets we can do our
+                    // final checks on tolls. This is where we will need to check the inputs and the outputs for tolls
+                    // and reduce the toll paid if we are sending back to the address from which the assets came from
+                    for (const auto& [destination, tollAssets] : mapAssetTollInputAmounts) {
+                        // Check if the destination exists in the output map
+                        auto outputIt = mapOutputToAddressTollTracker.find(EncodeDestination(destination));
+                        if (outputIt != mapOutputToAddressTollTracker.end()) {
+                            const auto& outputTollAssets = outputIt->second;
+
+                            // Compare asset names between tollAssets (inputs) and outputTollAssets (outputs)
+                            for (const auto& inputToll : tollAssets) {
+                                for (const auto& outputToll : outputTollAssets) {
+                                    if (inputToll.assetName == outputToll.assetName) {
+                                        // The destination and asset names match
+                                        LogPrintf("Match found: Destination: %s, Asset: %s\n", EncodeDestination(destination), inputToll.assetName);
+
+                                        // Subtract the total asset in the outputs verus the total in the inputs
+                                        CAmount adjustedTollSpentAmount = outputToll.nTotalAssetSpent - inputToll.nTotalAssetSpent;
+
+                                        if (adjustedTollSpentAmount < outputToll.nTotalAssetSpent) {
+                                            LogPrintf("Toll Adjustment: Adjusted Spent Total Amount: %d\n", adjustedTollSpentAmount);
+
+                                            CAmount oldTollRequired = CalculateToll(outputToll.nTotalAssetSpent, inputToll.nSetTollFee);
+
+                                            LogPrintf("Toll Adjustment: Old Toll Required: %d\n", oldTollRequired);
+
+                                            CAmount newReducedTollToBePaid = CalculateToll(adjustedTollSpentAmount, inputToll.nSetTollFee);
+
+                                            LogPrintf("Toll Adjustment: New Toll Required: %d\n", newReducedTollToBePaid);
+
+                                            CAmount tollDifference = oldTollRequired - newReducedTollToBePaid;
+                                            LogPrintf("Toll Adjustment: Toll Difference: %d\n", tollDifference);
+
+                                            // Update the transaction's toll output
+                                            bool tollUpdated = false;
+                                            for (auto& txOut : txNew.vout) {
+                                                if (txOut.scriptPubKey == GetScriptForDestination(DecodeDestination(outputToll.tollAddress))) {
+                                                    LogPrintf("Toll Adjustment: Found matching toll output. Old Value: %d\n", txOut.nValue);
+                                                    txOut.nValue -= tollDifference; // Update the toll amount
+                                                    tollUpdated = true;
+                                                    LogPrintf("Toll Adjustment: Updated toll output. New Value: %d\n", txOut.nValue);
+                                                    nChange += tollDifference;
+                                                    break;
+                                                }
+                                            }
+
+                                            if (!tollUpdated) {
+                                                LogPrintf("Toll Adjustment: Toll output for address %s not found in transaction.\n", outputToll.tollAddress);
+                                            }
+                                        }
+                                    }
                                 }
-                            } else {
-                                CScript scriptAssetChange = assetScriptChange;
-                                CAssetTransfer assetTransfer(assetChange.first, assetChange.second);
-
-                                assetTransfer.ConstructTransaction(scriptAssetChange);
-                                CTxOut newAssetTxOut(0, scriptAssetChange);
-
-                                txNew.vout.emplace_back(newAssetTxOut);
                             }
                         }
                     }
@@ -4006,7 +4247,7 @@ bool CWallet::DelAddressBook(const CTxDestination& address)
 
         // Delete destdata tuples associated with address
         std::string strAddress = EncodeDestination(address);
-        for (const std::pair<std::string, std::string> &item : mapAddressBook[address].destdata)
+        for (const std::pair<const std::string, std::string> &item : mapAddressBook[address].destdata)
         {
             CWalletDB(*dbw).EraseDestData(strAddress, item.first);
         }
@@ -4391,7 +4632,7 @@ std::set<CTxDestination> CWallet::GetAccountAddresses(const std::string& strAcco
 {
     LOCK(cs_wallet);
     std::set<CTxDestination> result;
-    for (const std::pair<CTxDestination, CAddressBookData>& item : mapAddressBook)
+    for (const std::pair<const CTxDestination, CAddressBookData>& item : mapAddressBook)
     {
         const CTxDestination& address = item.first;
         const std::string& strName = item.second.name;
@@ -4785,6 +5026,7 @@ CWallet* CWallet:: CreateWalletFromFile(const std::string walletFile)
         }
 
         walletInstance->SetBestChain(chainActive.GetLocator());
+
     }
     else if (gArgs.IsArgSet("-usehd")) {
         bool useHD = gArgs.GetBoolArg("-usehd", true);
@@ -4839,12 +5081,19 @@ CWallet* CWallet:: CreateWalletFromFile(const std::string walletFile)
     }
 
     CBlockIndex *pindexRescan = chainActive.Genesis();
-    if (!gArgs.GetBoolArg("-rescan", false))
+    if (!gArgs.GetBoolArg("-rescan", false) || fJustImportedExistingMnemonic)
     {
         CWalletDB walletdb(*walletInstance->dbw);
         CBlockLocator locator;
         if (walletdb.ReadBestBlock(locator))
             pindexRescan = FindForkInGlobalIndex(chainActive, locator);
+
+        // If we are importing an existing mnemonic, we want to trigger a rescan from Genesis
+        if (fJustImportedExistingMnemonic) {
+            pindexRescan = chainActive.Genesis();
+            walletInstance->UpdateTimeFirstKey(1);
+            fJustImportedExistingMnemonic = false;
+        }
     }
     if (chainActive.Tip() && chainActive.Tip() != pindexRescan)
     {

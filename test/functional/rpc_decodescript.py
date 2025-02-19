@@ -179,22 +179,22 @@ class DecodeScriptTest(EvrmoreTestFramework):
         self.nodes[0].generate(500)
 
         # issue (main output)
-        script = "76a91435a8d9b395f1594e2cf3e06e6ec357d1da89736888acc01a72766e710954455354415353455400e40b54020000000800000075"
+        script = "76a91435a8d9b395f1594e2cf3e06e6ec357d1da89736888acc019657672710954455354415353455400e40b540200000000010075"
         result = self.nodes[0].decodescript(script)
-        assert_equal('OP_DUP OP_HASH160 35a8d9b395f1594e2cf3e06e6ec357d1da897368 OP_EQUALVERIFY OP_CHECKSIG OP_EVR_ASSET 1a72766e710954455354415353455400e40b54020000000800000075', result['asm'])
+        assert_equal('OP_DUP OP_HASH160 35a8d9b395f1594e2cf3e06e6ec357d1da897368 OP_EQUALVERIFY OP_CHECKSIG OP_EVR_ASSET 19657672710954455354415353455400e40b540200000000010075', result['asm'])
         assert_equal(1, result['reqSigs'])
         assert_equal('new_asset', result['type'])
         assert_equal(1, len(result['addresses']))
         assert_equal('mkQgP9nSuRocxERXGnPaWr8NPTWtCM4uiN', result['addresses'][0])
-        assert_equal('2MvanKE2hxx2A5jcFZ5paHZHSb6VPZMEvGe', result['p2sh'])
+        assert_equal('2MyuKYMamYKEzvBvZV4KZbbMxJcBBax13tE', result['p2sh'])
         assert_equal('TESTASSET', result['asset_name'])
         assert_equal(100.0, result['amount'])
-        assert_equal(8, result['units'])
-        assert_equal(False, result['reissuable'])
+        assert_equal(0, result['units'])
+        assert_equal(True, result['reissuable'])
         assert_equal(False, result['hasIPFS'])
 
         # issue (owner output)
-        script = "76a91435a8d9b395f1594e2cf3e06e6ec357d1da89736888acc00f72766e6f0a5445535441535345542175"
+        script = "76a91435a8d9b395f1594e2cf3e06e6ec357d1da89736888acc00f6576726f0a5445535441535345542175"
         result = self.nodes[0].decodescript(script)
         assert_equal('TESTASSET!', result['asset_name'])
         assert_equal(1, result['amount'])

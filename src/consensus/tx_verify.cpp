@@ -19,6 +19,7 @@
 #include <wallet/wallet.h>
 #include <base58.h>
 #include <tinyformat.h>
+#include <limits>
 
 // TODO remove the following dependencies
 #include "chain.h"
@@ -199,12 +200,12 @@ bool CheckTransaction(const CTransaction& tx, CValidationState &state, bool fChe
 
         /** RVN START */
         // Find and handle all new OP_EVR_ASSET null data transactions
-        if (txout.scriptPubKey.IsNullAsset()) {
+        if (txout.scriptPubKey.IsNullAsset(IsTollsActive())) {
             CNullAssetTxData data;
             std::string address;
             std::string strError = "";
 
-            if (txout.scriptPubKey.IsNullAssetTxDataScript()) {
+            if (txout.scriptPubKey.IsNullAssetTxDataScript(IsTollsActive())) {
                 if (!AssetNullDataFromScript(txout.scriptPubKey, data, address))
                     return state.DoS(100, false, REJECT_INVALID, "bad-txns-null-asset-data-serialization");
 
@@ -382,7 +383,7 @@ bool CheckTransaction(const CTransaction& tx, CValidationState &state, bool fChe
 
         if (AreCoinbaseCheckAssetsDeployed()) {
             for (auto vout : tx.vout) {
-                if (vout.scriptPubKey.IsAssetScript() || vout.scriptPubKey.IsNullAsset()) {
+                if (vout.scriptPubKey.IsAssetScript() || vout.scriptPubKey.IsNullAsset(IsTollsActive())) {
                     return state.DoS(0, error("%s: coinbase contains asset transaction", __func__),
                                      REJECT_INVALID, "bad-txns-coinbase-contains-asset-txes");
                 }
@@ -622,8 +623,15 @@ bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, c
 
     // Create map that stores the amount of an asset transaction input. Used to verify no assets are burned
     std::map<std::string, CAmount> totalInputs;
-
     std::map<std::string, std::string> mapAddresses;
+
+    // Maps to store asset address tracking for tolls
+    std::map<std::string, std::vector<std::pair<std::string, CAmount>>> assetFromAddresses;
+    std::map<std::string, std::vector<std::pair<std::string, CAmount>>> assetToAddresses; // AssetName -> Vector<Address,Amount>
+
+    // Map to track toll amounts required and paid
+    std::map<std::string, CAmount> mapRequiredTolls; // Address -> Amount
+    std::map<std::string, CAmount> mapEVRSentInTransaction; // Address -> Amount
 
     for (unsigned int i = 0; i < tx.vin.size(); ++i) {
         const COutPoint &prevout = tx.vin[i].prevout;
@@ -650,6 +658,27 @@ bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, c
                     return state.DoS(100, false, REJECT_INVALID, "bad-txns-restricted-asset-transfer-from-frozen-address", false, "", tx.GetHash());
                 }
             }
+
+            // Track the addresses the asset is coming from - except for owners. We don't care about owner assets
+            if (!IsAssetNameAnOwner(data.assetName)) {
+                auto& fromAddressList = assetFromAddresses[data.assetName]; // Get or create the vector for this asset name
+
+                // Check if the address already exists in the vector
+                bool addressFound = false;
+                for (auto& entry : fromAddressList) {
+                    if (entry.first == EncodeDestination(data.destination)) {
+                        // Address exists, sum up the amounts
+                        entry.second += data.nAmount;
+                        addressFound = true;
+                        break;
+                    }
+                }
+
+                if (!addressFound) {
+                    // If address is not found, add a new entry
+                    fromAddressList.emplace_back(EncodeDestination(data.destination), data.nAmount);
+                }
+            }
         }
     }
 
@@ -671,20 +700,37 @@ bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, c
         // False until BIP9 consensus activates P2SH for Assets.
         bool fP2Active = AreP2SHAssetsAllowed();
 
-        // Returns true if operations on assets are found in the script.
-        // It will also possibly change the values of the arguments, as they are passed by reference.
         bool fIsAsset = txout.scriptPubKey.IsAssetScript(nType, nScriptType, fIsOwner, nStart, fP2Active);
+        bool fIsNullAssetData = txout.scriptPubKey.IsNullAsset(IsTollsActive());
+        bool fIsUnspendable = txout.scriptPubKey.IsUnspendable();
+
+        // Track every EVR being sent in the outputs so we have the data for validating tolls later.
+        if (!fIsAsset && !fIsNullAssetData && !fIsUnspendable && txout.nValue > 0) {
+            CTxDestination destTracker;
+            ExtractDestination(txout.scriptPubKey, destTracker);
+            if (!IsValidDestination(destTracker)) {
+                return state.DoS(100, false, REJECT_INVALID, "bad-txns-evr-tracker-address-verification", false, "", tx.GetHash());
+            }
+            std::string toAddress = EncodeDestination(destTracker);
+            // TODO - remove after testing
+            LogPrintf("Found a EVR send: %s - %d\n", toAddress, txout.nValue);
+            if (mapEVRSentInTransaction.count(toAddress)) {
+                mapEVRSentInTransaction[toAddress] += txout.nValue;
+            } else {
+                mapEVRSentInTransaction[toAddress] = txout.nValue;
+            }
+        }
 
         if (assetCache) {
             if (fIsAsset && !AreAssetsDeployed())
                 return state.DoS(100, false, REJECT_INVALID, "bad-txns-is-asset-and-asset-not-active");
 
-            if (txout.scriptPubKey.IsNullAsset()) {
+            if (txout.scriptPubKey.IsNullAsset(IsTollsActive())) {
                 if (!AreRestrictedAssetsDeployed())
                     return state.DoS(100, false, REJECT_INVALID,
                                      "bad-tx-null-asset-data-before-restricted-assets-activated");
 
-                if (txout.scriptPubKey.IsNullAssetTxDataScript()) {
+                if (txout.scriptPubKey.IsNullAssetTxDataScript(IsTollsActive())) {
                     if (!ContextualCheckNullAssetTxOut(txout, assetCache, strError, myNullAssetData))
                         return state.DoS(100, false, REJECT_INVALID, strError, false, "", tx.GetHash());
                 } else if (txout.scriptPubKey.IsNullGlobalRestrictionAssetTxDataScript()) {
@@ -714,6 +760,11 @@ bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, c
                 totalOutputs.at(transfer.strName) += transfer.nAmount;
             else
                 totalOutputs.insert(make_pair(transfer.strName, transfer.nAmount));
+
+            // Track the address the asset is going to for tolls
+            if (!IsAssetNameAnOwner(transfer.strName)) {
+                assetToAddresses[transfer.strName].push_back({address, transfer.nAmount});
+            }
 
             if (!fRunningUnitTests) {
                 if (IsAssetNameAnOwner(transfer.strName)) {
@@ -791,6 +842,7 @@ bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, c
                 error("%s : Failed to get new asset from transaction: %s", __func__, tx.GetHash().GetHex());
                 return state.DoS(100, false, REJECT_INVALID, "bad-txns-reissue-serialzation-failed", false, "", tx.GetHash());
             }
+
             if (!ContextualCheckReissueAsset(assetCache, reissue_asset, strError, tx))
                 return state.DoS(100, false, REJECT_INVALID, "bad-txns-reissue-contextual-" + strError, false, "", tx.GetHash());
         } else if (tx.IsNewUniqueAsset()) {
@@ -885,5 +937,100 @@ bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, c
     if (totalOutputs.size() != totalInputs.size()) {
         return state.DoS(100, false, REJECT_INVALID, "bad-tx-asset-inputs-size-does-not-match-outputs-size", false, "", tx.GetHash());
     }
+
+
+    if (IsTollsActive()) {
+        // Ensure the toll is paid for each asset transferred to a new address
+        for (const auto& assetPair : assetToAddresses) {
+            const std::string& assetName = assetPair.first;
+            const std::vector<std::pair<std::string, CAmount>>& toAddresses = assetPair.second;
+
+            // Retrieve asset metadata to check for toll amount
+            CNewAsset asset;
+            if (!assetCache->GetAssetMetaDataIfExists(assetName, asset))
+                return state.DoS(100, false, REJECT_INVALID, "bad-txns-asset-not-exist", false, "", tx.GetHash());
+
+            if (asset.nTollAmount > 0) {
+                CAmount tollAmount = asset.nTollAmount;  // Assume tollAmount is part of asset metadata
+                std::string tollAddress = asset.strTollAddress;
+
+                // Check for each "to" address
+                for (const auto& toAddressPair : toAddresses) {
+                    const std::string& toAddress = toAddressPair.first;
+                    CAmount sentAmount = toAddressPair.second;
+
+                    // Allow assets to be sent to the global burn address without paying a toll.
+                    if (toAddress == GetParams().GlobalBurnAddress()) {
+                        continue;
+                    }
+
+                    // Get the amount previously sent from the address
+                    CAmount amountPreviouslySent = 0;
+                    auto fromAddresses = assetFromAddresses.find(assetName);
+                    if (fromAddresses != assetFromAddresses.end()) {
+                        for (const auto& fromAddressPair : fromAddresses->second) {
+                            if (fromAddressPair.first == toAddress) {
+                                amountPreviouslySent = fromAddressPair.second;
+                                break;
+                            }
+                        }
+                    }
+
+                    // Calculate tollable amount: sentAmount - amountPreviouslySent
+                    CAmount tollableAmount = sentAmount - amountPreviouslySent;
+
+                    if (tollableAmount > 0) { // Toll is only applied to excess amounts
+                        CAmount totalToll = CalculateToll(tollableAmount, tollAmount);
+                        if (totalToll < 0 || totalToll > MAX_MONEY) {
+                            return state.DoS(100, false, REJECT_INVALID, "bad-txns-toll-calculation-max-money", false, "", tx.GetHash());
+                        }
+
+                        // Log for debugging purposes
+                        LogPrintf("Asset: %s, To Address: %s, Sent Amount: %d, Previously Sent: %d, Tollable Amount: %d, Toll: %d\n",
+                                  assetName, toAddress, sentAmount, amountPreviouslySent, tollableAmount, totalToll);
+
+                        // Update the required tolls map
+                        if (mapRequiredTolls.count(tollAddress)) {
+                            mapRequiredTolls[tollAddress] += totalToll;
+                        } else {
+                            mapRequiredTolls[tollAddress] = totalToll;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Summary of tolls paid vs required
+        LogPrintf("Toll Verification Summary:\n");
+        for (const auto& requiredToll : mapRequiredTolls) {
+            const std::string& tollAddress = requiredToll.first;
+            CAmount totalRequiredToll = requiredToll.second;
+            CAmount totalPaidToll = mapEVRSentInTransaction.count(tollAddress) ? mapEVRSentInTransaction[tollAddress] : 0;
+
+            if (totalPaidToll < totalRequiredToll) {
+                LogPrintf("Summary: Address: %s, Required Toll: %d, Paid Toll: %d (INSUFFICIENT)\n",
+                          tollAddress, totalRequiredToll, totalPaidToll);
+            } else {
+                LogPrintf("Summary: Address: %s, Required Toll: %d, Paid Toll: %d (SUFFICIENT)\n",
+                          tollAddress, totalRequiredToll, totalPaidToll);
+            }
+        }
+
+        // Finally, compare the required tolls to the actual tolls paid for each toll address
+        for (const auto& requiredToll : mapRequiredTolls) {
+            const std::string& tollAddress = requiredToll.first;
+            CAmount totalRequiredToll = requiredToll.second;
+
+            // Check if the toll paid to this address is sufficient
+            if (mapEVRSentInTransaction.count(tollAddress) == 0 || mapEVRSentInTransaction[tollAddress] < totalRequiredToll) {
+                return state.DoS(100, false, REJECT_INVALID, "bad-txns-insufficient-toll-paid", false, "", tx.GetHash());
+            }
+        }
+    }
     return true;
 }
+
+
+
+
+

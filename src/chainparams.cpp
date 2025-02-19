@@ -216,19 +216,25 @@ public:
         consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nTimeout = 1230767999; // UTC: Wed Dec 31 2008 23:59:59
         consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nOverrideRuleChangeActivationThreshold = 1814;
         consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nOverrideMinerConfirmationWindow = 2016; // Approx 90% of 2016
+        consensus.vDeployments[Consensus::DEPLOYMENT_TOLL].bit = 29;
+        consensus.vDeployments[Consensus::DEPLOYMENT_TOLL].nStartTime = 1999145601; // TODO - Set this for mainnet
+        consensus.vDeployments[Consensus::DEPLOYMENT_TOLL].nTimeout = 2099145601; // TODO - Set this for mainnet
+        consensus.vDeployments[Consensus::DEPLOYMENT_TOLL].nOverrideRuleChangeActivationThreshold = 1814; // TODO - Set this for mainnet
+        consensus.vDeployments[Consensus::DEPLOYMENT_TOLL].nOverrideMinerConfirmationWindow = 2016; // Approx 90% of 2016 // TODO - Set this for mainnet
         // Removed the Ravencoin BIP9 parameters for ASSETS (RIP2), MSG_REST_ASSETS (RIP5), TRANSFER_SCRIPT_SIZE, 
         //     ENFORCE_VALUE, COINBASE_ASSETS, and P2SH_ASSETS
 
-        // The best chain should have at least this much work
+        // The best chain should have at least this much work.
+        // per bitcoin-maintainer-tools release-prep.sh, just use "chainwork" as reported by getblockchaininfo on the current chain        
         // consensus.nMinimumChainWork = uint256S("000000000000000000000000000000000000000000000020d4ac871fb7009b63"); // Block 1186833
         consensus.nMinimumChainWork = uint256S("0x00");
-        // EVR-TODO: need to change this after we re-start the chain
+        // EVR-TODO: Need to update this as we get more recent chain info
 
-
-        // By default assume that the signatures in ancestors of this block are valid. Block# 1040000
+        // By default assume that the signatures in ancestors of this block are valid.
+        // per bitcoin-maintainer-tools release-prep.sh, just use "bestblockhash" as reported by getblockchaininfo on the current chain        
         // consensus.defaultAssumeValid = uint256S("0x0000000000000d4840d4de1f7d943542c2aed532bd5d6527274fc0142fa1a410"); // Block 1186833
         consensus.defaultAssumeValid = uint256S("0x00");
-        // EVR-TODO: need to set this to the genesis block
+        // EVR-TODO: Need to update this as we get more recent chain info
 
         /**
          * The message start string is designed to be unlikely to occur in normal data.
@@ -299,15 +305,14 @@ public:
 
         // EVR-TODO: Update the checkpointData and chainTxData as we get more recent data
 
+        // This is just used for reporting progress % on updates, so approximation is ok
+        // Per bitcoin's usage, get the data from RPC: getchaintxstats 4096 <blockhash>
         chainTxData = ChainTxData{
             // Update as we know more about the contents of the Evrmore chain
-            // Stats as of 0x00000000000016ec03d8d93f9751323bcc42137b1b4df67e6a11c4394fd8e5ad window size 43200
-//            1577939273, // * UNIX timestamp of last known number of transactions
-            0, // * UNIX timestamp of last known number of transactions
-//            6709969,    // * total number of transactions between genesis and that timestamp
-            0,    // * total number of transactions between genesis and that timestamp
-                        //   (the tx=... number in the SetBestChain debug.log lines)
-            0.1       // * estimated number of transactions per second after that timestamp
+            // Stats as of block 927,995
+            0,  // * UNIX timestamp of last known number of transactions
+            0,  // * total number of transactions between genesis and that timestamp
+            0.1 // * estimated number of transactions per second after that timestamp
         };
 
         // Burn Amounts
@@ -321,6 +326,9 @@ public:
         nIssueRestrictedAssetBurnAmount = 1500 * COIN;
         nAddNullQualifierTagBurnAmount = .1 * COIN;
 
+        nReissueMetaDataOnly = 1 * COIN;
+        nRemintingOnly = 0.1 * COIN;
+
         strIssueAssetBurnAddress = "EXissueAssetXXXXXXXXXXXXXXXXYiYRBD";
         strReissueAssetBurnAddress = "EXReissueAssetXXXXXXXXXXXXXXY1ANQH";
         strIssueSubAssetBurnAddress = "EXissueSubAssetXXXXXXXXXXXXXWW1ASo";
@@ -333,6 +341,9 @@ public:
 
             //Global Burn Address
         strGlobalBurnAddress = "EXBurnXXXXXXXXXXXXXXXXXXXXXXZ8ZjfN";
+
+        // Burn Mint Assets Address
+        strBurnMintAddress = "EXBurnMintXXXXXXXXXXXXXXXXXXXbdK5E";
 
         nMaxReorganizationDepth = 60; // 60 at 1 minute block timespan is +/- 60 minutes.
         nMinReorganizationPeers = 4;
@@ -379,18 +390,24 @@ public:
         consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nTimeout = 1230767999; // UTC: Wed Dec 31 2008 23:59:59
         consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nOverrideRuleChangeActivationThreshold = 1814;
         consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nOverrideMinerConfirmationWindow = 2016; // Approx 90% of 2016
+        consensus.vDeployments[Consensus::DEPLOYMENT_TOLL].bit = 29;
+        consensus.vDeployments[Consensus::DEPLOYMENT_TOLL].nStartTime = 1739836801; // UTC: Tue February 18 2025 00:00:01
+        consensus.vDeployments[Consensus::DEPLOYMENT_TOLL].nTimeout = 1771372799; // UTC: Tue February 17 2026 23:59:59
+        consensus.vDeployments[Consensus::DEPLOYMENT_TOLL].nOverrideRuleChangeActivationThreshold = 1411; // Approx 70% of 2016
+        consensus.vDeployments[Consensus::DEPLOYMENT_TOLL].nOverrideMinerConfirmationWindow = 2016;
         // Removed the Ravencoin BIP9 parameters for ASSETS (RIP2), MSG_REST_ASSETS (RIP5), TRANSFER_SCRIPT_SIZE, 
         //     ENFORCE_VALUE, COINBASE_ASSETS, and P2SH_ASSETS
 
         // The best chain should have at least this much work.
-        //consensus.nMinimumChainWork = uint256S("0x000000000000000000000000000000000000000000000000000168050db560b4");
-        consensus.nMinimumChainWork = uint256S("0x00");
-        // EVR-TODO: need to change this after we re-start the chain
+        // per bitcoin-maintainer-tools release-prep.sh, just use "chainwork" as reported by getblockchaininfo on the current chain
+        consensus.nMinimumChainWork = uint256S("0x00000000000000000000000000000000000000000000000000000e5e1012de97");  // Block 928065
+        // EVR-TODO: Need to update this as we get more recent chain info
 
         // By default assume that the signatures in ancestors of this block are valid.
-        //consensus.defaultAssumeValid = uint256S("0x000000006272208605c4df3b54d4d5515759105e7ffcb258e8cd8077924ffef1");
-        consensus.defaultAssumeValid = uint256S("0x00");
-        // EVR-TODO: need to set this to the genesis block
+        // per bitcoin-maintainer-tools release-prep.sh, just use "bestblockhash" as reported by getblockchaininfo on the current chain        
+        consensus.defaultAssumeValid = uint256S("0x000000a1479d0cfd788b0312c7b2453ead0c53401186c49dffbf256af6e874f6");  // Block 928065
+        // EVR-TODO: Need to update this as we get more recent chain info
+
 
         pchMessageStart[0] = 0x45; // E
         pchMessageStart[1] = 0x56; // V
@@ -443,22 +460,23 @@ public:
 
         checkpointData = (CCheckpointData) {
             {
-            //       {257610, uint256S("0x000000006272208605c4df3b54d4d5515759105e7ffcb258e8cd8077924ffef1")},
-            //        {587000, uint256S("0x000000040ca00d88c1c3be8fb298365304a6fa13af95b8fa2a689ad6736e37f6")}
+                {197836, uint256S("0x000000a09a45d43f8fa06c12bb377d85fe34a9c378da6e8e089aa8b5d7a04fb2")},   // 2023-05-15
+                {395673, uint256S("0x000000e461cb6a4e40fa71a3778f4473836a81ced2d0d92b148f121783bc09b3")},   // 2023-10-27
+                {593509, uint256S("0x0000008ee346bbee34d58fd282ca9075763f8598e973eceb647f437ba2166e5d")},   // 2024-05-03
+                {791345, uint256S("0x00000009903eda37c5c6d03de1e8e38162dcb754987518e10785635e3423a2e9")}    // Block 791345 on 2024-10-31
             }
         };
         
         // EVR-TODO: Update the checkpointData and chainTxData as we get more recent data
 
+        // This is just used for reporting progress % on updates, so approximation is ok
+        // Per bitcoin's usage, get the data from RPC: getchaintxstats 4096 <blockhash>
         chainTxData = ChainTxData{
             // Update as we know more about the contents of the Evrmore chain
-            // Stats as of 00000023b66f46d74890287a7b1157dd780c7c5fdda2b561eb96684d2b39d62e window size 43200
-//            1543633332, // * UNIX timestamp of last known number of transactions
-            0, // * UNIX timestamp of last known number of transactions
-//            146666,     // * total number of transactions between genesis and that timestamp
-            0,     // * total number of transactions between genesis and that timestamp
-                        //   (the tx=... number in the SetBestChain debug.log lines)
-            0.02        // * estimated number of transactions per second after that timestamp
+            // Stats as of block 927,995
+            1739833683, // * UNIX timestamp of last known number of transactions
+            928284,     // * total number of transactions between genesis and that timestamp
+            0.014       // * estimated number of transactions per second after that timestamp
         };
 
         // Burn Amounts
@@ -471,6 +489,9 @@ public:
         nIssueSubQualifierAssetBurnAmount = 100 * COIN;
         nIssueRestrictedAssetBurnAmount = 1500 * COIN;
         nAddNullQualifierTagBurnAmount = .1 * COIN;
+
+        nReissueMetaDataOnly = 1 * COIN;
+        nRemintingOnly = 0.1 * COIN;
 
         // Burn Addresses
         strIssueAssetBurnAddress = "n1issueAssetXXXXXXXXXXXXXXXXWdnemQ";
@@ -485,6 +506,9 @@ public:
 
         // Global Burn Address
         strGlobalBurnAddress = "n1BurnXXXXXXXXXXXXXXXXXXXXXXU1qejP";
+
+        // Burn Mint Assets Address
+        strBurnMintAddress = "n1BurnMintXXXXXXXXXXXXXXXXXXbVTQiY";
 
         nMaxReorganizationDepth = 60; // 60 at 1 minute block timespan is +/- 60 minutes.
         nMinReorganizationPeers = 4;
@@ -531,6 +555,11 @@ public:
         consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nTimeout = 1230767999; // UTC: Wed Dec 31 2008 23:59:59
         consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nOverrideRuleChangeActivationThreshold = 1814;
         consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nOverrideMinerConfirmationWindow = 2016; // Approx 90% of 2016
+        consensus.vDeployments[Consensus::DEPLOYMENT_TOLL].bit = 6;
+        consensus.vDeployments[Consensus::DEPLOYMENT_TOLL].nStartTime = 0;
+        consensus.vDeployments[Consensus::DEPLOYMENT_TOLL].nTimeout = 999999999999ULL;
+        consensus.vDeployments[Consensus::DEPLOYMENT_TOLL].nOverrideRuleChangeActivationThreshold = 400;
+        consensus.vDeployments[Consensus::DEPLOYMENT_TOLL].nOverrideMinerConfirmationWindow = 500;
         // Removed the Ravencoin BIP9 parameters for ASSETS (RIP2), MSG_REST_ASSETS (RIP5), TRANSFER_SCRIPT_SIZE, 
         //     ENFORCE_VALUE, COINBASE_ASSETS, and P2SH_ASSETS
 
@@ -605,6 +634,9 @@ public:
         nIssueRestrictedAssetBurnAmount = 1500 * COIN;
         nAddNullQualifierTagBurnAmount = .1 * COIN;
 
+        nReissueMetaDataOnly = 1 * COIN;
+        nRemintingOnly = 0.1 * COIN;
+
         // Burn Addresses
         strIssueAssetBurnAddress = "n1issueAssetXXXXXXXXXXXXXXXXWdnemQ";
         strReissueAssetBurnAddress = "n1ReissueAssetXXXXXXXXXXXXXXWG9NLd";
@@ -618,6 +650,9 @@ public:
 
         // Global Burn Address
         strGlobalBurnAddress = "n1BurnXXXXXXXXXXXXXXXXXXXXXXU1qejP";
+
+        // Burn Mint Assets Address
+        strBurnMintAddress = "n1BurnMintXXXXXXXXXXXXXXXXXXbVTQiY";
 
         nMaxReorganizationDepth = 60; // 60 at 1 minute block timespan is +/- 60 minutes.
         nMinReorganizationPeers = 4;

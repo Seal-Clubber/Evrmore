@@ -41,7 +41,7 @@ QList<MyRestrictedAssetRecord> MyRestrictedAssetRecord::decomposeTransaction(con
         const CTxOut &txout = wtx.tx->vout[i];
         isminetype mine = ISMINE_NO;
 
-        if (txout.scriptPubKey.IsNullAssetTxDataScript()) {
+        if (txout.scriptPubKey.IsNullAssetTxDataScript(IsTollsActive())) {
             CNullAssetTxData data;
             std::string address;
             if (!AssetNullDataFromScript(txout.scriptPubKey, data, address)) {

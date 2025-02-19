@@ -326,8 +326,9 @@ class EvrmoreTestFramework:
         NOTE: the timestamp should match time of genesis block.
         NOTE: the timestamp could be retrieved via "getblockhash 0" + "getblock <hash>"."""
 
-        # EVR-TODO: change the mocktime to the final regtest genesis block time
-        self.mocktime = 1646092801 + (201 * 1 * 60)
+        # This must match the regtest genesis block time + (201 * 1 * 60)
+        self.mocktime = 1667074564 + (201 * 1 * 60)
+
 
     def disable_mocktime(self):
         self.mocktime = 0

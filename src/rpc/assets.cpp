@@ -3,17 +3,11 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-//#include <amount.h>
-//#include <base58.h>
 #include "assets/assets.h"
 #include "assets/assetdb.h"
 #include <map>
 #include "tinyformat.h"
-//#include <rpc/server.h>
-//#include <script/standard.h>
-//#include <utilstrencodings.h>
 
-#include "amount.h"
 #include "base58.h"
 #include "chain.h"
 #include "consensus/validation.h"
@@ -25,6 +19,7 @@
 #include "policy/fees.h"
 #include "policy/policy.h"
 #include "policy/rbf.h"
+#include "rpc/assets.h"
 #include "rpc/mining.h"
 #include "rpc/safemode.h"
 #include "rpc/server.h"
@@ -86,6 +81,8 @@ std::string AssetTypeToString(AssetType& assetType)
         case AssetType::MSGCHANNEL:         return "MSGCHANNEL";
         case AssetType::VOTE:               return "VOTE";
         case AssetType::REISSUE:            return "REISSUE";
+        case AssetType::REISSUE_METADATA:   return "REISSUE_METADATA";
+        case AssetType::REMINTING:          return "REMINTING";
         case AssetType::QUALIFIER:          return "QUALIFIER";
         case AssetType::SUB_QUALIFIER:      return "SUB_QUALIFIER";
         case AssetType::RESTRICTED:         return "RESTRICTED";
@@ -416,11 +413,89 @@ UniValue UpdateGlobalRestrictedAsset(const JSONRPCRequest &request, const int8_t
     return result;
 }
 
+void assetToJSON(const CNewAsset& asset, UniValue& result)
+{
+    AddBaseAssetInfoToUniValue(asset, result);
+    AddIpfsInfoToUniValue(asset, result);
+    if (GetCurrentAssetCache() != nullptr) {
+        CNullAssetTxVerifierString verifier;
+        if (GetCurrentAssetCache()->GetAssetVerifierStringIfExists(asset.strName, verifier)) {
+            result.push_back(Pair("verifier_string", verifier.verifier_string));
+        }
+    }
+
+    AddTollAssetInfoToUniValue(asset, result);
+}
+
+void AddBaseAssetInfoToUniValue(const CNewAsset& asset, UniValue& result)
+{
+    result.push_back(Pair("version", AssetVersionToString(asset.nVersion)));
+    result.push_back(Pair("name", asset.strName));
+    result.push_back(Pair("amount", UnitValueFromAmount(asset.nAmount, asset.strName)));
+    result.push_back(Pair("units", asset.units));
+    result.push_back(Pair("reissuable", asset.nReissuable));
+    result.push_back(Pair("has_ipfs", asset.nHasIPFS));
+
+    AddIpfsInfoToUniValue(asset, result);
+}
+
+void AddTollAssetInfoToUniValue(const CNewAsset& asset, UniValue& result)
+{
+    result.push_back(Pair("toll_amount_mutability", asset.nTollAmountMutability));
+    result.push_back(Pair("toll_amount", ValueFromAmount(asset.nTollAmount)));
+    result.push_back(Pair("toll_address_mutability", asset.nTollAddressMutability));
+    result.push_back(Pair("toll_address", asset.strTollAddress));
+    result.push_back(Pair("remintable", asset.nRemintable));
+    result.push_back(Pair("burned_total", ValueFromAmount(asset.nTotalBurned)));
+    result.push_back(Pair("currently_burned", ValueFromAmount(asset.nCurrentlyBurned)));
+    result.push_back(Pair("reminted_total", ValueFromAmount(asset.nTotalBurned - asset.nCurrentlyBurned)));
+}
+
+void AddIpfsInfoToUniValue(const CNewAsset& asset, UniValue& result) {
+
+    bool fShowPermanent = true;
+
+    if (asset.nHasIPFS) {
+        if (IsTollsActive()) {
+            // Certain criteria met, showing what the permanent hash is going to be
+            if (asset.nVersion == STANDARD_VERSION && !asset.nReissuable) {
+                fShowPermanent = false;
+                if (asset.strPermanentIPFSHash.size() == 32) {
+                    result.push_back(Pair("permanent_txid", EncodeAssetData(asset.strIPFSHash)));
+                } else {
+                    result.push_back(Pair("permanent_ipfs_hash", EncodeAssetData(asset.strIPFSHash)));
+                }
+            }
+
+            // Always show current ipfs
+            if (asset.strIPFSHash.size() == 32) {
+                result.push_back(Pair("txid", EncodeAssetData(asset.strIPFSHash)));
+            } else {
+                result.push_back(Pair("ipfs_hash", EncodeAssetData(asset.strIPFSHash)));
+            }
+        } else {
+            if (asset.strIPFSHash.size() == 32) {
+                result.push_back(Pair("txid", EncodeAssetData(asset.strIPFSHash)));
+            } else {
+                result.push_back(Pair("ipfs_hash", EncodeAssetData(asset.strIPFSHash)));
+            }
+        }
+    }
+
+    if (fShowPermanent) {
+        if (asset.strPermanentIPFSHash.size() == 32) {
+            result.push_back(Pair("permanent_txid", EncodeAssetData(asset.strPermanentIPFSHash)));
+        } else {
+            result.push_back(Pair("permanent_ipfs_hash", EncodeAssetData(asset.strPermanentIPFSHash)));
+        }
+    }
+}
+
 UniValue issue(const JSONRPCRequest& request)
 {
-    if (request.fHelp || !AreAssetsDeployed() || request.params.size() < 1 || request.params.size() > 8)
+    if (request.fHelp || !AreAssetsDeployed() || request.params.size() < 1 || request.params.size() > 14)
         throw std::runtime_error(
-            "issue \"asset_name\" qty \"( to_address )\" \"( change_address )\" ( units ) ( reissuable ) ( has_ipfs ) \"( ipfs_hash )\"\n"
+            "issue \"asset_name\" qty \"( to_address )\" \"( change_address )\" ( units ) ( reissuable ) ( has_ipfs ) \"( ipfs_hash )\" \"( permanent_ipfs_hash )\" ( toll_amount ) \"( toll_address ) ( toll_amount_mutability ) ( toll_address_mutability ) ( remintable )\"\n"
             + AssetActivationWarning() +
             "\nIssue an asset, subasset or unique asset.\n"
             "Asset name must not conflict with any existing asset.\n"
@@ -432,11 +507,17 @@ UniValue issue(const JSONRPCRequest& request)
             "1. \"asset_name\"            (string, required) a unique name\n"
             "2. \"qty\"                   (numeric, optional, default=1) the number of units to be issued\n"
             "3. \"to_address\"            (string), optional, default=\"\"), address asset will be sent to, if it is empty, address will be generated for you\n"
-            "4. \"change_address\"        (string), optional, default=\"\"), address the the evr change will be sent to, if it is empty, change address will be generated for you\n"
+            "4. \"change_address\"        (string), optional, default=\"\"), address the evr change will be sent to, if it is empty, change address will be generated for you\n"
             "5. \"units\"                 (integer, optional, default=0, min=0, max=8), the number of decimals precision for the asset (0 for whole units (\"1\"), 8 for max precision (\"1.00000000\")\n"
             "6. \"reissuable\"            (boolean, optional, default=true (false for unique assets)), whether future reissuance is allowed\n"
             "7. \"has_ipfs\"              (boolean, optional, default=false), whether ipfs hash is going to be added to the asset\n"
             "8. \"ipfs_hash\"             (string, optional but required if has_ipfs = 1), an ipfs hash or a txid hash once RIP5 is activated\n"
+            "9. \"permanent_ipfs_hash\"  (string, optional) a permanent IPFS hash for the asset\n"
+            "10. \"toll_amount\"           (numeric, optional, default=0), the amount of toll fee to be assigned to the asset\n"
+            "11. \"toll_address\"          (string, optional, default=\"\"), address to receive the toll fee, if it is empty, the default toll address will be used\n"
+            "12. \"toll_amount_mutability\" (boolean, optional, default=false), whether future changing is allowed for the toll amount\n"
+            "13. \"toll_address_mutability\" (boolean, optional, default=false), whether future changing is allowed for the toll address\n"
+            "14. \"remintable\"              (boolean, optional, default=true), whether the ability to remint assets that are burned is allowed\n"
 
             "\nResult:\n"
             "\"txid\"                     (string) The transaction id\n"
@@ -446,7 +527,7 @@ UniValue issue(const JSONRPCRequest& request)
             + HelpExampleCli("issue", "\"ASSET_NAME\" 1000 \"myaddress\"")
             + HelpExampleCli("issue", "\"ASSET_NAME\" 1000 \"myaddress\" \"changeaddress\" 4")
             + HelpExampleCli("issue", "\"ASSET_NAME\" 1000 \"myaddress\" \"changeaddress\" 2 true")
-            + HelpExampleCli("issue", "\"ASSET_NAME\" 1000 \"myaddress\" \"changeaddress\" 8 false true QmTqu3Lk3gmTsQVtjU7rYYM37EAW4xNmbuEAp2Mjr4AV7E")
+            + HelpExampleCli("issue", "\"ASSET_NAME\" 1000 \"myaddress\" \"changeaddress\" 8 false true QmTqu3Lk3gmTsQVtjU7rYYM37EAW4xNmbuEAp2Mjr4AV7E QmTqu3Lk3gmTsQVtjU7rYYM37EAW4xNmbuEAp2Mjr4AV7E 0.01 \"tollAddress\" true true")
             + HelpExampleCli("issue", "\"ASSET_NAME/SUB_ASSET\" 1000 \"myaddress\" \"changeaddress\" 2 true")
             + HelpExampleCli("issue", "\"ASSET_NAME#uniquetag\"")
         );
@@ -469,13 +550,13 @@ UniValue issue(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INVALID_PARAMETER, std::string("Invalid asset name: ") + assetName + std::string("\nError: ") + assetError);
     }
 
-    // Push the user to use the issue restrictd rpc call if they are trying to issue a restricted asset
+    // Push the user to use the issue restricted rpc call if they are trying to issue a restricted asset
     if (assetType == AssetType::RESTRICTED) {
         throw (JSONRPCError(RPC_INVALID_PARAMETER, std::string("Use the rpc call issuerestricted to issue a restricted asset")));
     }
 
-    // Push the user to use the issue restrictd rpc call if they are trying to issue a restricted asset
-    if (assetType == AssetType::QUALIFIER || assetType == AssetType::SUB_QUALIFIER  ) {
+    // Push the user to use the issue restricted rpc call if they are trying to issue a restricted asset
+    if (assetType == AssetType::QUALIFIER || assetType == AssetType::SUB_QUALIFIER) {
         throw (JSONRPCError(RPC_INVALID_PARAMETER, std::string("Use the rpc call issuequalifierasset to issue a qualifier asset")));
     }
 
@@ -523,8 +604,7 @@ UniValue issue(const JSONRPCRequest& request)
         if (!change_address.empty()) {
             CTxDestination destination = DecodeDestination(change_address);
             if (!IsValidDestination(destination)) {
-                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
-                                   std::string("Invalid Change Address: Invalid Evrmore address: ") + change_address);
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid Change Address: Invalid Evrmore address: ") + change_address);
             }
         }
     }
@@ -549,6 +629,48 @@ UniValue issue(const JSONRPCRequest& request)
         ipfs_hash = request.params[7].get_str();
     }
 
+    // New field: second IPFS hash
+    bool fCheckPermanent = false;
+    std::string permanent_ipfs_hash = "";
+    if (request.params.size() > 8) {
+        permanent_ipfs_hash = request.params[8].get_str();
+        if (permanent_ipfs_hash.size() > 0)
+            fCheckPermanent = true;
+    }
+
+    // New field: toll amount
+    CAmount toll_amount = 0;
+    if (request.params.size() > 9) {
+        toll_amount = AmountFromValue(request.params[9]);
+    }
+
+    // New field: toll address
+    std::string toll_address = "";
+    if (request.params.size() > 10) {
+        toll_address = request.params[10].get_str();
+        if (!toll_address.empty()) {
+            CTxDestination destination = DecodeDestination(toll_address);
+            if (!IsValidDestination(destination)) {
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid Toll Address: Invalid Evrmore address: ") + toll_address);
+            }
+        }
+    }
+
+    bool toll_amount_mutability = true;
+    if (request.params.size() > 11) {
+        toll_amount_mutability = request.params[11].get_bool();
+    }
+
+    bool toll_address_mutability = true;
+    if (request.params.size() > 12) {
+        toll_address_mutability = request.params[12].get_bool();
+    }
+
+    bool remintable = true;
+    if (request.params.size() > 13) {
+        remintable = request.params[13].get_bool();
+    }
+
     // Reissues don't have an expire time
     int64_t expireTime = 0;
 
@@ -556,17 +678,27 @@ UniValue issue(const JSONRPCRequest& request)
     if (fMessageCheck)
         CheckIPFSTxidMessage(ipfs_hash, expireTime);
 
-    // check for required unique asset params
+    if (fCheckPermanent)
+        CheckIPFSTxidMessage(permanent_ipfs_hash, expireTime);
+
+    // Check for required unique asset params
     if ((assetType == AssetType::UNIQUE || assetType == AssetType::MSGCHANNEL) && (nAmount != COIN || units != 0 || reissuable)) {
         throw JSONRPCError(RPC_INVALID_PARAMETER, std::string("Invalid parameters for issuing a unique asset."));
     }
 
-    // check for required unique asset params
+    // Check for required qualifier asset params
     if ((assetType == AssetType::QUALIFIER || assetType == AssetType::SUB_QUALIFIER) && (nAmount < QUALIFIER_ASSET_MIN_AMOUNT || nAmount > QUALIFIER_ASSET_MAX_AMOUNT  || units != 0 || reissuable)) {
         throw JSONRPCError(RPC_INVALID_PARAMETER, std::string("Invalid parameters for issuing a qualifier asset."));
     }
 
-    CNewAsset asset(assetName, nAmount, units, reissuable ? 1 : 0, has_ipfs ? 1 : 0, DecodeAssetData(ipfs_hash));
+    // Adding remintable as a flag, changes the version of the asset to version 2 if it is set to true
+    // Which is the default value. If tolls isn't live, change to false before creating the asset object to
+    // retain version 1 backwards compatibility.
+    if (!IsTollsActive()) {
+        remintable = false;
+    }
+
+    CNewAsset asset(assetName, nAmount, units, reissuable ? 1 : 0, has_ipfs ? 1 : 0, DecodeAssetData(ipfs_hash), DecodeAssetData(permanent_ipfs_hash), toll_amount, toll_address, toll_amount_mutability, toll_address_mutability, remintable);
 
     CReserveKey reservekey(pwallet);
     CWalletTx transaction;
@@ -592,9 +724,9 @@ UniValue issue(const JSONRPCRequest& request)
 
 UniValue issueunique(const JSONRPCRequest& request)
 {
-    if (request.fHelp || !AreAssetsDeployed() || request.params.size() < 2 || request.params.size() > 5)
+    if (request.fHelp || !AreAssetsDeployed() || request.params.size() < 2 || request.params.size() > 10)
         throw std::runtime_error(
-                "issueunique \"root_name\" [asset_tags] ( [ipfs_hashes] ) \"( to_address )\" \"( change_address )\"\n"
+                "issueunique \"root_name\" [asset_tags] ( [ipfs_hashes] ) \"( to_address )\" \"( change_address )\"  ( [permanent_ipfs_hashes] ) \"( toll_address )\" ( toll_amount ) ( toll_amount_mutability ) ( toll_address_mutability )\n"
                 + AssetActivationWarning() +
                 "\nIssue unique asset(s).\n"
                 "root_name must be an asset you own.\n"
@@ -608,6 +740,11 @@ UniValue issueunique(const JSONRPCRequest& request)
                 "3. \"ipfs_hashes\"           (array, optional) ipfs hashes or txid hashes corresponding to each supplied tag (should be same size as \"asset_tags\")\n"
                 "4. \"to_address\"            (string, optional, default=\"\"), address assets will be sent to, if it is empty, address will be generated for you\n"
                 "5. \"change_address\"        (string, optional, default=\"\"), address the the evr change will be sent to, if it is empty, change address will be generated for you\n"
+                "6. \"permanent_ipfs_hashes\" (array, optional) permanent ipfs hashes or txid hashes corresponding to each supplied tag (should be same size as \"asset_tags\")\n"
+                "7. \"toll_address\"          (string, optional, default=\"\"), address for tolls to be paid to\n"
+                "8. \"toll_amount\"           (number, optional, default=0), toll amount to be paid when an asset is transferred\n"
+                "9. \"toll_amount_mutability\" (boolean, optional, default=false), whether future changing is allowed for the toll amount\n"
+                "10. \"toll_address_mutability\" (boolean, optional, default=false), whether future changing is allowed for the toll address\n"
 
                 "\nResult:\n"
                 "\"txid\"                     (string) The transaction id\n"
@@ -645,7 +782,7 @@ UniValue issueunique(const JSONRPCRequest& request)
 
     const UniValue& ipfsHashes = request.params[2];
     if (!ipfsHashes.isNull()) {
-        if (!ipfsHashes.isArray() || ipfsHashes.size() != assetTags.size()) {
+        if (!ipfsHashes.isArray() || (ipfsHashes.size() != assetTags.size() && ipfsHashes.size() != 0)) {
             throw JSONRPCError(RPC_INVALID_PARAMETER, std::string("If provided, IPFS hashes must be an array of the same size as the asset tags array."));
         }
     }
@@ -690,8 +827,28 @@ UniValue issueunique(const JSONRPCRequest& request)
         }
     }
 
+    // New parameters
+    UniValue permanentIpfsHashes = request.params.size() > 5 ? request.params[5] : UniValue(UniValue::VNULL);
+    std::string tollAddress = request.params.size() > 6 ? request.params[6].get_str() : "";
+    CAmount tollAmount = request.params.size() > 7 ? AmountFromValue(request.params[7]) : 0;
+    bool toll_amount_mutability = request.params.size() > 8 ? request.params[8].get_bool() : true;
+    bool toll_address_mutability = request.params.size() > 9 ? request.params[9].get_bool() : true;
+
+    if (!permanentIpfsHashes.isNull()) {
+        if (!permanentIpfsHashes.isArray() || (permanentIpfsHashes.size() != assetTags.size() && permanentIpfsHashes.size() != 0)) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "Permanent IPFS hashes must be the same size as asset tags.");
+        }
+    }
+
+    if (!tollAddress.empty()) {
+        CTxDestination destination = DecodeDestination(tollAddress);
+        if (!IsValidDestination(destination)) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid toll address.");
+        }
+    }
+
     std::vector<CNewAsset> assets;
-    for (int i = 0; i < (int)assetTags.size(); i++) {
+    for (size_t i = 0; i < (size_t)assetTags.size(); i++) {
         std::string tag = assetTags[i].get_str();
 
         if (!IsUniqueTagValid(tag)) {
@@ -701,15 +858,27 @@ UniValue issueunique(const JSONRPCRequest& request)
         std::string assetName = GetUniqueAssetName(rootName, tag);
         CNewAsset asset;
 
-        if (ipfsHashes.isNull())
-        {
-            asset = CNewAsset(assetName, UNIQUE_ASSET_AMOUNT, UNIQUE_ASSET_UNITS, UNIQUE_ASSETS_REISSUABLE, 0, "");
+        // Process regular ipfs hashes
+        std::string tempIpfsHash = "";
+        if (!ipfsHashes.isNull() && i < ipfsHashes.size()) {
+            if (!ipfsHashes[i].get_str().empty()) {
+                tempIpfsHash = ipfsHashes[i].get_str();
+            }
         }
-        else
-        {
-            asset = CNewAsset(assetName, UNIQUE_ASSET_AMOUNT, UNIQUE_ASSET_UNITS, UNIQUE_ASSETS_REISSUABLE, 1,
-                              DecodeAssetData(ipfsHashes[i].get_str()));
+
+        // Process permanent ipfs hashes
+        std::string tempPermanentIpfsHash = "";
+        if (!permanentIpfsHashes.isNull() && i < permanentIpfsHashes.size()) {
+            if (!permanentIpfsHashes[i].get_str().empty()) {
+                tempPermanentIpfsHash = permanentIpfsHashes[i].get_str();
+            }
         }
+
+        std::string ipfsHash = tempIpfsHash.empty() ? "" : DecodeAssetData(tempIpfsHash);
+        std::string permanentIpfsHash = tempPermanentIpfsHash.empty() ? "" : DecodeAssetData(tempPermanentIpfsHash);
+
+        asset = CNewAsset(assetName, UNIQUE_ASSET_AMOUNT, UNIQUE_ASSET_UNITS, UNIQUE_ASSETS_REISSUABLE, ipfsHash.empty() ? 0 : 1,
+                  ipfsHash, permanentIpfsHash, tollAmount, tollAddress, toll_amount_mutability, toll_address_mutability, UNIQUE_ASSETS_REMINTABLE);
 
         assets.push_back(asset);
     }
@@ -828,6 +997,7 @@ UniValue getassetdata(const JSONRPCRequest& request)
 
                 "\nResult:\n"
                 "{\n"
+                "  version: (string),\n"
                 "  name: (string),\n"
                 "  amount: (number),\n"
                 "  units: (number),\n"
@@ -836,13 +1006,22 @@ UniValue getassetdata(const JSONRPCRequest& request)
                 "  ipfs_hash: (hash), (only if has_ipfs = 1 and that data is a ipfs hash)\n"
                 "  txid_hash: (hash), (only if has_ipfs = 1 and that data is a txid hash)\n"
                 "  verifier_string: (string)\n"
+                "  permanent_ipfs_hash: (hash), (only if it has been assigned and that data is a ipfs hash)\n"
+                "  permanent_txid_hash: (hash), (only if it has been assigned and that data is a txid hash)\n"
+                "  toll_amount_mutability: (number),\n"
+                "  toll_amount: (number),\n"
+                "  toll_address_mutability: (number),\n"
+                "  toll_address: (string),\n"
+                "  remintable: (number),\n"
+                "  total_burned: (number),\n"
+                "  currently_burned: (number),\n"
+                "  reminted_total: (number),\n"
                 "}\n"
 
                 "\nExamples:\n"
                 + HelpExampleCli("getassetdata", "\"ASSET_NAME\"")
                 + HelpExampleRpc("getassetdata", "\"ASSET_NAME\"")
         );
-
 
     std::string asset_name = request.params[0].get_str();
 
@@ -855,29 +1034,51 @@ UniValue getassetdata(const JSONRPCRequest& request)
         if (!currentActiveAssetCache->GetAssetMetaDataIfExists(asset_name, asset))
             return NullUniValue;
 
-        result.push_back(Pair("name", asset.strName));
-        result.push_back(Pair("amount", UnitValueFromAmount(asset.nAmount, asset.strName)));
-        result.push_back(Pair("units", asset.units));
-        result.push_back(Pair("reissuable", asset.nReissuable));
-        result.push_back(Pair("has_ipfs", asset.nHasIPFS));
-
-        if (asset.nHasIPFS) {
-            if (asset.strIPFSHash.size() == 32) {
-                result.push_back(Pair("txid", EncodeAssetData(asset.strIPFSHash)));
-            } else {
-                result.push_back(Pair("ipfs_hash", EncodeAssetData(asset.strIPFSHash)));
-            }
-        }
-
-        CNullAssetTxVerifierString verifier;
-        if (currentActiveAssetCache->GetAssetVerifierStringIfExists(asset.strName, verifier)) {
-            result.push_back(Pair("verifier_string", verifier.verifier_string));
-        }
+        assetToJSON(asset, result);
 
         return result;
     }
 
     return NullUniValue;
+}
+
+UniValue getburnaddresses(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 0)
+        throw std::runtime_error(
+                "getburnaddresses\n"
+                "\nReturns a list of all burn addresses the chain uses\n"
+
+                "\nResult:\n"
+                "[\n"
+                "  nickname: address (string),\n"
+                "  nickname: address,\n"
+                "  nickname: address,\n"
+                "  etc\n"
+                "]\n"
+
+                "\nExamples:\n"
+                + HelpExampleCli("getburnaddresses", "")
+                + HelpExampleRpc("getburnaddresses", "")
+        );
+
+    LOCK(cs_main);
+    UniValue result (UniValue::VOBJ);
+
+    // Add all burn addresses using the pushKV function
+    result.pushKV("issue_asset", GetParams().IssueAssetBurnAddress());
+    result.pushKV("issue_sub_asset", GetParams().IssueSubAssetBurnAddress());
+    result.pushKV("issue_unique_asset", GetParams().IssueUniqueAssetBurnAddress());
+    result.pushKV("issue_msg_channel_asset", GetParams().IssueMsgChannelAssetBurnAddress());
+    result.pushKV("issue_qualifier_asset", GetParams().IssueQualifierAssetBurnAddress());
+    result.pushKV("issue_sub_qualifier_asset", GetParams().IssueSubQualifierAssetBurnAddress());
+    result.pushKV("issue_restricted_asset", GetParams().IssueRestrictedAssetBurnAddress());
+    result.pushKV("reissue_or_remint_asset", GetParams().ReissueAssetBurnAddress());
+    result.pushKV("add_null_qualifier_tag", GetParams().AddNullQualifierTagBurnAddress());
+    result.pushKV("global_burn_address", GetParams().GlobalBurnAddress());
+    result.pushKV("burn_mint_address", GetParams().BurnMintAddress());
+
+    return result;
 }
 
 template <class Iter, class Incr>
@@ -1570,29 +1771,36 @@ UniValue transferfromaddress(const JSONRPCRequest& request)
 
 UniValue reissue(const JSONRPCRequest& request)
 {
-    if (request.fHelp || !AreAssetsDeployed() || request.params.size() > 7 || request.params.size() < 3)
+    if (request.fHelp || !AreAssetsDeployed() || request.params.size() > 13 || request.params.size() < 3)
         throw std::runtime_error(
-                "reissue \"asset_name\" qty \"to_address\" \"change_address\" ( reissuable ) ( new_units) \"( new_ipfs )\" \n"
-                + AssetActivationWarning() +
-                "\nReissues a quantity of an asset to an owned address if you own the Owner Token"
-                "\nCan change the reissuable flag during reissuance"
-                "\nCan change the ipfs hash during reissuance"
+            "reissue \"asset_name\" qty \"to_address\" \"change_address\" ( reissuable ) ( new_units) \"( new_ipfs )\" \"( permanent_ipfs )\" ( change_toll_amount ) ( toll_amount ) \"( toll_address ) ( toll_amount_mutability ) ( toll_address_mutability )\"\n"
+            + AssetActivationWarning() +
+            "\nReissues a quantity of an asset to an owned address if you own the Owner Token"
+            "\nCan change the reissuable flag during reissuance"
+            "\nCan change the IPFS hash during reissuance"
+            "\nCan specify optional toll asset details."
 
-                "\nArguments:\n"
-                "1. \"asset_name\"               (string, required) name of asset that is being reissued\n"
-                "2. \"qty\"                      (numeric, required) number of assets to reissue\n"
-                "3. \"to_address\"               (string, required) address to send the asset to\n"
-                "4. \"change_address\"           (string, optional) address that the change of the transaction will be sent to\n"
-                "5. \"reissuable\"               (boolean, optional, default=true), whether future reissuance is allowed\n"
-                "6. \"new_units\"                (numeric, optional, default=-1), the new units that will be associated with the asset\n"
-                "7. \"new_ipfs\"                 (string, optional, default=\"\"), whether to update the current ipfs hash or txid once RIP5 is active\n"
+            "\nArguments:\n"
+            "1. \"asset_name\"               (string, required) name of the asset that is being reissued\n"
+            "2. \"qty\"                      (numeric, required) number of assets to reissue\n"
+            "3. \"to_address\"               (string, required) address to send the asset to\n"
+            "4. \"change_address\"           (string, optional) address that the change of the transaction will be sent to\n"
+            "5. \"reissuable\"               (boolean, optional, default=true), whether future reissuance is allowed\n"
+            "6. \"new_units\"                (numeric, optional, default=-1), the new units that will be associated with the asset\n"
+            "7. \"new_ipfs\"                 (string, optional, default=\"\"), whether to update the current IPFS hash or txid once RIP5 is active\n"
+            "8. \"new_permanent_ipfs\"          (string, optional, default=\"\"), a new permanent IPFS hash\n"
+            "9. \"change_toll_amount\"        (boolean, optional, default=false), whether the toll amount is being changed\n"
+            "10. \"new_toll_amount\"             (numeric, optional, default=0), the toll amount to be associated with the asset\n"
+            "11. \"new_toll_address\"            (string, optional, default=\"\"), the toll address to be associated with the asset\n"
+            "12. \"toll_amount_mutability\"      (boolean, optional, default=true), whether future changing is allowed on toll amount\n"
+            "13. \"toll_address_mutability\"      (boolean, optional, default=true), whether future changing is allowed on toll address\n"
 
-                "\nResult:\n"
-                "\"txid\"                     (string) The transaction id\n"
+            "\nResult:\n"
+            "\"txid\"                     (string) The transaction id\n"
 
-                "\nExamples:\n"
-                + HelpExampleCli("reissue", "\"ASSET_NAME\" 20 \"address\"")
-                + HelpExampleRpc("reissue", "\"ASSET_NAME\" 20 \"address\" \"change_address\" \"true\" 8 \"Qmd286K6pohQcTKYqnS1YhWrCiS4gz7Xi34sdwMe9USZ7u\"")
+            "\nExamples:\n"
+            + HelpExampleCli("reissue", "\"ASSET_NAME\" 20 \"address\"")
+            + HelpExampleRpc("reissue", "\"ASSET_NAME\" 20 \"address\" \"change_address\" \"true\" 8 \"Qmd286K6pohQcTKYqnS1YhWrCiS4gz7Xi34sdwMe9USZ7u\" \"Qmd286K6pohQcTKYqnS1YhWrCiS4gz7Xi34sdwMe9USZ7u\" true 100 \"toll_address\" true true")
         );
 
     CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
@@ -1603,44 +1811,100 @@ UniValue reissue(const JSONRPCRequest& request)
     ObserveSafeMode();
     LOCK2(cs_main, pwallet->cs_wallet);
 
-    // To send a transaction the wallet must be unlocked
     EnsureWalletIsUnlocked(pwallet);
 
-    // Get that paramaters
     std::string asset_name = request.params[0].get_str();
     CAmount nAmount = AmountFromValue(request.params[1]);
     std::string address = request.params[2].get_str();
 
-    std::string changeAddress =  "";
+    std::string changeAddress = "";
     if (request.params.size() > 3)
         changeAddress = request.params[3].get_str();
 
-    bool reissuable = true;
-    if (request.params.size() > 4) {
-        reissuable = request.params[4].get_bool();
+    if (!changeAddress.empty()) {
+        CTxDestination destination = DecodeDestination(changeAddress);
+        if (!IsValidDestination(destination)) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid Change Address: Invalid Evrmore address: ") + changeAddress);
+        }
     }
 
+    bool reissuable = true;
+    if (request.params.size() > 4)
+        reissuable = request.params[4].get_bool();
+
     int newUnits = -1;
-    if (request.params.size() > 5) {
+    if (request.params.size() > 5)
         newUnits = request.params[5].get_int();
-    }
 
     std::string newipfs = "";
     bool fMessageCheck = false;
-
     if (request.params.size() > 6) {
-        fMessageCheck = true;
         newipfs = request.params[6].get_str();
+        if (newipfs.size() > 0)
+            fMessageCheck = true;
     }
 
-    // Reissues don't have an expire time
-    int64_t expireTime = 0;
+    // New field: permanent IPFS hash
+    bool fCheckPermanent = false;
+    std::string newPermanentIPFSHash = "";
+    if (request.params.size() > 7) {
+        newPermanentIPFSHash = request.params[7].get_str();
+        if (newPermanentIPFSHash.size() > 0)
+            fCheckPermanent = true;
+    }
 
-    // Check the message data
+    // New field: fChangeTollAmount
+    bool fChangeTollAmount = false;
+    if (request.params.size() > 8) {
+        fChangeTollAmount = request.params[8].get_bool();
+    }
+
+    // New field: toll amount
+    CAmount newTollAmount = 0;
+    if (request.params.size() > 9) {
+        newTollAmount = AmountFromValue(request.params[9]);
+    }
+
+    // New field: toll address
+    std::string newTollAddress = "";
+    if (request.params.size() > 10) {
+        newTollAddress = request.params[10].get_str();
+        if (!newTollAddress.empty()) {
+            CTxDestination destination = DecodeDestination(newTollAddress);
+            if (!IsValidDestination(destination)) {
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid Toll Address: Invalid Evrmore address: ") + newTollAddress);
+            }
+        }
+    }
+
+    // New field: fTollAmountMutable
+    bool fTollAmountMutable = true;
+    if (request.params.size() > 11) {
+        fTollAmountMutable = request.params[11].get_bool();
+    }
+
+    // New field: fTollAddressReissuable
+    bool fTollAddressMutable = true;
+    if (request.params.size() > 12) {
+        fTollAddressMutable = request.params[12].get_bool();
+    }
+
+    int64_t expireTime = 0;
     if (fMessageCheck)
         CheckIPFSTxidMessage(newipfs, expireTime);
 
-    CReissueAsset reissueAsset(asset_name, nAmount, newUnits, reissuable, DecodeAssetData(newipfs));
+    if (fCheckPermanent)
+        CheckIPFSTxidMessage(newPermanentIPFSHash, expireTime);
+
+    // Reissuing rpc call can't be used to remint
+    // Use remint rpccall
+    bool reminting_asset = false;
+
+    // Don't change this value if it is already true
+    bool remintable = true;
+
+    // Create a CReissueAsset object with all parameters
+    CReissueAsset reissueAsset(asset_name, nAmount, newUnits, reissuable, DecodeAssetData(newipfs), DecodeAssetData(newPermanentIPFSHash), fChangeTollAmount, newTollAmount, newTollAddress, reminting_asset, fTollAmountMutable, fTollAddressMutable, remintable);
 
     std::pair<int, std::string> error;
     CReserveKey reservekey(pwallet);
@@ -1650,8 +1914,255 @@ UniValue reissue(const JSONRPCRequest& request)
     CCoinControl crtl;
     crtl.destChange = DecodeDestination(changeAddress);
 
+    LogPrintf("Creating reissue transaction with hashses: --%s--, --%s--\n", newipfs, newPermanentIPFSHash);
     // Create the Transaction
     if (!CreateReissueAssetTransaction(pwallet, crtl, reissueAsset, address, error, transaction, reservekey, nRequiredFee))
+        throw JSONRPCError(error.first, error.second);
+
+    std::string strError = "";
+    if (!ContextualCheckReissueAsset(passets, reissueAsset, strError, *transaction.tx.get()))
+        throw JSONRPCError(RPC_INVALID_REQUEST, strError);
+
+    LogPrintf("0 Setting the reissue flags to Amount: %d, Address: %d\n", reissueAsset.nTollAmountMutability, reissueAsset.nTollAddressMutability);
+
+    // Send the Transaction to the network
+    std::string txid;
+    if (!SendAssetTransaction(pwallet, transaction, reservekey, error, txid))
+        throw JSONRPCError(error.first, error.second);
+
+    UniValue result(UniValue::VARR);
+    result.push_back(txid);
+    return result;
+}
+
+UniValue updatemetadata(const JSONRPCRequest& request)
+{
+    if (request.fHelp || !AreAssetsDeployed() || !IsTollsActive() || request.params.size() > 9 || request.params.size() < 3)
+    throw std::runtime_error(
+        "updatemetadata \"asset_name\" \"change_address\" \"ipfs_hash\" \"permanent_ipfs\" \"toll_address\" ( change_toll_amount ) ( toll_amount ) ( toll_amount_mutability ) ( toll_address_mutability )\n"
+        + AssetActivationWarning() +
+        "\nUpdates the metadata of an asset. Requires the owner token of the asset."
+        "\nCan modify toll details, IPFS hash, and other metadata during the update."
+
+        "\nArguments:\n"
+        "1. \"asset_name\"               (string, required) The name of the asset being updated.\n"
+        "2. \"change_address\"           (string, optional) The address where the change should be sent to.\n"
+        "3. \"ipfs_hash\"                (string, optional) The new IPFS hash for the asset (default=\"\").\n"
+        "4. \"permanent_ipfs\"           (string, optional) The new permanent IPFS hash for the asset. Once this is set. It can't be changed (default=\"\").\n"
+        "5. \"toll_address\"             (string, optional) The address to collect toll fees for asset transactions (default=\"\").\n"
+        "6. \"change_toll_amount\"       (boolean, optional, default=False) Whether to modify the toll amount.\n"
+        "7. \"toll_amount\"              (numeric, optional, default=-1) The new toll amount for the asset.\n"
+        "8. \"toll_amount_mutability\"   (boolean, optional, default=True) Whether the toll amount can be modified in the future.\n"
+        "9. \"toll_address_mutability\"  (boolean, optional, default=True) Whether the toll address can be modified in the future.\n"
+
+        "\nResult:\n"
+        "\"txid\"                        (string) The transaction ID of the update.\n"
+
+        "\nExamples:\n"
+        + HelpExampleCli("updatemetadata", "\"ASSET_NAME\" \"\" \"Qmd286K6pohQcTKYqnS1YhWrCiS4gz7Xi34sdwMe9USZ7u\" \"QmeYfp9kVxrQo92EMpNzBrAtwxPQzqLZ9sQDL6pZ6Ffdr5\" \"toll_address\" true 10 true false")
+        + HelpExampleRpc("updatemetadata", "\"ASSET_NAME\", \"\", \"Qmd286K6pohQcTKYqnS1YhWrCiS4gz7Xi34sdwMe9USZ7u\", \"QmeYfp9kVxrQo92EMpNzBrAtwxPQzqLZ9sQDL6pZ6Ffdr5\", \"toll_address\", true, 10, true, false")
+    );
+
+    CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
+    if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
+        return NullUniValue;
+    }
+
+    ObserveSafeMode();
+    LOCK2(cs_main, pwallet->cs_wallet);
+
+
+    EnsureWalletIsUnlocked(pwallet);
+
+    std::string asset_name = request.params[0].get_str();
+    std::string changeAddress = "";
+    if (request.params.size() > 1)
+        changeAddress = request.params[1].get_str();
+
+    if (!changeAddress.empty()) {
+        CTxDestination destination = DecodeDestination(changeAddress);
+        if (!IsValidDestination(destination)) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid Change Address: Invalid Evrmore address: ") + changeAddress);
+        }
+    }
+
+    std::string newipfs = "";
+    bool fCheckIPFSHash = false;
+    if (request.params.size() > 2) {
+        newipfs = request.params[2].get_str();
+        if (newipfs.size() > 0)
+            fCheckIPFSHash = true;
+    }
+
+    bool fCheckPermanentIPFSHash = false;
+    std::string newpermanentipfshash = "";
+    if (request.params.size() > 3) {
+        newpermanentipfshash = request.params[3].get_str();
+        if (newpermanentipfshash.size() > 0)
+            fCheckPermanentIPFSHash = true;
+    }
+
+    std::string newTollAddress = "";
+    if (request.params.size() > 4) {
+        newTollAddress = request.params[4].get_str();
+        if (!newTollAddress.empty()) {
+            CTxDestination destination = DecodeDestination(newTollAddress);
+            if (!IsValidDestination(destination)) {
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid Toll Address: Invalid Evrmore address: ") + newTollAddress);
+            }
+        }
+    }
+
+    bool fChangeTollAmount = false;
+    if (request.params.size() > 5) {
+        fChangeTollAmount = request.params[5].get_bool();
+    }
+
+    CAmount newTollAmount = 0;
+    if (request.params.size() > 6) {
+        newTollAmount = AmountFromValue(request.params[6]);
+    }
+
+    bool fTollAmountMutability = true;
+    if (request.params.size() > 7) {
+        fTollAmountMutability = request.params[7].get_bool();
+    }
+
+    bool fTollAddressMutability = true;
+    if (request.params.size() > 8) {
+        fTollAddressMutability = request.params[8].get_bool();
+    }
+
+    int64_t expireTime = 0;
+    if (fCheckIPFSHash)
+        CheckIPFSTxidMessage(newipfs, expireTime);
+
+    if (fCheckPermanentIPFSHash)
+        CheckIPFSTxidMessage(newpermanentipfshash, expireTime);
+
+    // Default reissue parameters.
+    CAmount nAmount = 0;
+    int nUnits = -1;
+    bool fReissuable = true;
+
+    // We need a valid address, but because we aren't issuing any assets. We can use the burn address.
+    std::string address = GetParams().ReissueAssetBurnAddress();
+
+    // updatemetadata rpc call can't be used to remint
+    // Use remint rpccall
+    bool reminting_asset = false;
+
+    // Don't change this value if it is already true
+    bool remintable = true;
+
+    // Create a CReissueAsset object with all parameters that only change the metadata
+    CReissueAsset reissueAsset(asset_name, nAmount, nUnits, fReissuable, DecodeAssetData(newipfs), DecodeAssetData(newpermanentipfshash), fChangeTollAmount, newTollAmount, newTollAddress, reminting_asset, fTollAmountMutability, fTollAddressMutability, remintable);
+
+    std::pair<int, std::string> error;
+    CReserveKey reservekey(pwallet);
+    CWalletTx transaction;
+    CAmount nRequiredFee;
+
+    CCoinControl crtl;
+    crtl.destChange = DecodeDestination(changeAddress);
+
+    LogPrintf("Creating updatemetadata transaction with hashses: --%s--, --%s--\n", newipfs, newpermanentipfshash);
+    // Create the Transaction
+    if (!CreateReissueAssetTransaction(pwallet, crtl, reissueAsset, address, error, transaction, reservekey, nRequiredFee))
+        throw JSONRPCError(error.first, error.second);
+
+    std::string strError = "";
+    if (!ContextualCheckReissueAsset(passets, reissueAsset, strError, *transaction.tx.get()))
+        throw JSONRPCError(RPC_INVALID_REQUEST, strError);
+
+    LogPrintf("0 Setting the mutability flags to Amount: %d, Address: %d\n", reissueAsset.nTollAmountMutability, reissueAsset.nTollAddressMutability);
+
+    // Send the Transaction to the network
+    std::string txid;
+    if (!SendAssetTransaction(pwallet, transaction, reservekey, error, txid))
+        throw JSONRPCError(error.first, error.second);
+
+    UniValue result(UniValue::VARR);
+    result.push_back(txid);
+    return result;
+}
+
+UniValue remint(const JSONRPCRequest& request)
+{
+    if (request.fHelp || !AreAssetsDeployed() || !IsTollsActive() || request.params.size() > 5 || request.params.size() < 3)
+    throw std::runtime_error(
+        "remint \"asset_name\" \"qty\" \"to_address\" \"change_address\" \"update_remintable\"\n"
+        + AssetActivationWarning() +
+        "\nRemints an asset that has been burned. Requires the owner token of the asset."
+        "\nCan disable remintable also in needed"
+
+        "\nArguments:\n"
+        "1. \"asset_name\"               (string, required) The name of the asset being updated.\n"
+        "2. \"qty\"                      (numeric, required) number of assets to remint\n"
+        "3. \"to_address\"               (string, required) address that the reminted assets to go to\n"
+        "4. \"change_address\"           (string, optional) The address where the change should be sent to.\n"
+        "5. \"update_remintable\"        (boolean, optional default=true) If we are disabling reminting option for this asset \n"
+
+
+        "\nResult:\n"
+        "\"txid\"                        (string) The transaction ID of the update.\n"
+
+        "\nExamples:\n"
+        + HelpExampleCli("remint", "\"ASSET_NAME\" 10 \"to_address\" \"change_Address\" true")
+        + HelpExampleRpc("remint", "\"ASSET_NAME\", 10, \"to_address\", \"change_Address\", true")
+    );
+
+    CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
+    if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
+        return NullUniValue;
+    }
+
+    ObserveSafeMode();
+    LOCK2(cs_main, pwallet->cs_wallet);
+
+    EnsureWalletIsUnlocked(pwallet);
+
+    std::string asset_name = request.params[0].get_str();
+    CAmount amount = AmountFromValue(request.params[1]);
+    std::string to_address = request.params[2].get_str();
+
+    std::string change_address = "";
+    if (request.params.size() > 3)
+        change_address = request.params[3].get_str();
+
+    bool remintable = true;
+    if (request.params.size() > 4) {
+        remintable = request.params[4].get_bool();
+    }
+
+    CTxDestination destination = DecodeDestination(to_address);
+    if (!IsValidDestination(destination)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid To Address: Invalid Evrmore address: ") + to_address);
+    }
+
+
+    if (!change_address.empty()) {
+        CTxDestination destination = DecodeDestination(change_address);
+        if (!IsValidDestination(destination)) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid Change Address: Invalid Evrmore address: ") + change_address);
+        }
+    }
+
+    // Create a CReissueAsset for reminting
+    CReissueAsset reissueAsset(asset_name, amount, remintable);
+
+    std::pair<int, std::string> error;
+    CReserveKey reservekey(pwallet);
+    CWalletTx transaction;
+    CAmount nRequiredFee;
+
+    CCoinControl crtl;
+    crtl.destChange = DecodeDestination(change_address);
+
+    LogPrintf("Creating reminting transaction. Asset Name : %s, Amount: %d, Address: %s, New Remintable Setting: %d\n", asset_name, amount, to_address, remintable);
+
+    // Create the Transaction
+    if (!CreateReissueAssetTransaction(pwallet, crtl, reissueAsset, to_address, error, transaction, reservekey, nRequiredFee))
         throw JSONRPCError(error.first, error.second);
 
     std::string strError = "";
@@ -1667,7 +2178,88 @@ UniValue reissue(const JSONRPCRequest& request)
     result.push_back(txid);
     return result;
 }
+
 #endif
+
+UniValue getcalculatedtoll(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() > 4)
+        throw std::runtime_error(
+                "getcalculatedtoll \"asset_name\" amount ( change_amount ) ( overwrite_toll_fee )\n"
+                "\nCalculate the toll for transferring an asset.\n"
+                "\nIf asset name is empty, and overwrite toll fee is not supplied. 0.1 will be the toll fee\n"
+                "\nArguments:\n"
+                "1. \"asset_name\"          (string, optional default = \"\") The name of the asset.\n"
+                "2. amount                  (numeric, optional default = 100) The amount of the asset being sent.\n"
+                "3. change_amount           (numeric, optional, default = 0) The amount sent back to the sender as change.\n"
+                "4. overwrite_toll_fee      (numeric, optional) If provided, this value will be used as the toll fee.\n"
+                "\nResult:\n"
+                "\"asset_name\"           (string) The asset from which the toll fee and address are coming from\n"
+                "\"toll_fee\"             (numeric) The fee being used for this calculation\n"
+                "\"toll_address\"         (numeric) The toll address assigned to the given asset if asset exists\n"
+                "\"amount_sending\"       (numeric) The amount of asset that is being sent minus the change\n"
+                "\"est_calculated_toll\"  (numeric) The calculated toll fee for the transaction.\n"
+                "\nExamples:\n"
+                + HelpExampleCli("getcalculatedtoll", "\"ASSET_NAME\" 100 10 0.05")
+                + HelpExampleRpc("getcalculatedtoll", "\"ASSET_NAME\", 100, 10, 0.05")
+        );
+
+    LOCK(cs_main);
+
+    if (!IsTollsActive()) {
+        throw JSONRPCError(RPC_VERIFY_ERROR, "Tolls not active");
+    }
+
+    // Extract parameters
+    std::string asset_name = request.params.size() > 0 && !request.params[0].isNull() ? request.params[0].get_str() : "";
+    CAmount amount = request.params.size() > 1 && !request.params[1].isNull() ? AmountFromValue(request.params[1]) : 100 * COIN;
+    CAmount change_amount = request.params.size() > 2 && !request.params[2].isNull() ? AmountFromValue(request.params[2]) : 0;
+
+    std::string toll_address = "";
+    CAmount toll_fee = 0;
+
+    if (change_amount > amount) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "change_amount can't be bigger than amount");
+    }
+
+    if (amount == 0 || amount - change_amount == 0) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "amount can't be zero. amount - change_amount can't be zero");
+    }
+
+    CNewAsset asset;
+    if (!asset_name.empty()) {
+        auto currentActiveAssetCache = GetCurrentAssetCache();
+        if (currentActiveAssetCache) {
+            if (currentActiveAssetCache->GetAssetMetaDataIfExists(asset_name, asset)) {
+                toll_fee = asset.nTollAmount;
+                toll_address = asset.strTollAddress;
+            }
+        }
+    }
+
+    if (asset_name.empty() && request.params.size() < 3) {
+        toll_fee = 0.1 * COIN;
+    }
+
+    // overwrite the toll fee
+    if (request.params.size() > 3) {
+        toll_fee = AmountFromValue(request.params[3]);
+    }
+
+    if (asset_name != asset.strName) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "asset metadata can't be found. ");
+    }
+
+    CAmount calculated_toll = CalculateToll(amount - change_amount, toll_fee);
+
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("asset_name", asset_name);
+    result.pushKV("toll_fee", ValueFromAmount(toll_fee));
+    result.pushKV("toll_address", toll_address);
+    result.pushKV("amount_sending", ValueFromAmount(amount - change_amount));
+    result.pushKV("est_calculated_toll", ValueFromAmount(calculated_toll));
+    return result;
+}
 
 UniValue listassets(const JSONRPCRequest& request)
 {
@@ -1749,20 +2341,10 @@ UniValue listassets(const JSONRPCRequest& request)
         CNewAsset asset = data.asset;
         if (verbose) {
             UniValue detail(UniValue::VOBJ);
-            detail.push_back(Pair("name", asset.strName));
-            detail.push_back(Pair("amount", UnitValueFromAmount(asset.nAmount, asset.strName)));
-            detail.push_back(Pair("units", asset.units));
-            detail.push_back(Pair("reissuable", asset.nReissuable));
-            detail.push_back(Pair("has_ipfs", asset.nHasIPFS));
             detail.push_back(Pair("block_height", data.nHeight));
             detail.push_back(Pair("blockhash", data.blockHash.GetHex()));
-            if (asset.nHasIPFS) {
-                if (asset.strIPFSHash.size() == 32) {
-                    detail.push_back(Pair("txid_hash", EncodeAssetData(asset.strIPFSHash)));
-                } else {
-                    detail.push_back(Pair("ipfs_hash", EncodeAssetData(asset.strIPFSHash)));
-                }
-            }
+            assetToJSON(asset, detail);
+
             result.push_back(Pair(asset.strName, detail));
         } else {
             result.push_back(asset.strName);
@@ -2048,7 +2630,7 @@ UniValue listtagsforaddress(const JSONRPCRequest &request)
 
 UniValue listaddressesfortag(const JSONRPCRequest& request)
 {
-    if (request.fHelp || !AreRestrictedAssetsDeployed() || request.params.size() !=1)
+    if (request.fHelp || !AreRestrictedAssetsDeployed() || request.params.size() != 1)
         throw std::runtime_error(
                 "listaddressesfortag tag_name\n"
                 + RestrictedActivationWarning() +
@@ -2328,36 +2910,35 @@ UniValue checkglobalrestriction(const JSONRPCRequest& request)
 
 UniValue issuequalifierasset(const JSONRPCRequest& request)
 {
-    if (request.fHelp || !AreAssetsDeployed() || request.params.size() < 1 || request.params.size() > 6)
+    if (request.fHelp || !AreAssetsDeployed() || request.params.size() < 1 || request.params.size() > 7)
         throw std::runtime_error(
-                "issuequalifierasset \"asset_name\" qty \"( to_address )\" \"( change_address )\" ( has_ipfs ) \"( ipfs_hash )\"\n"
+                "issuequalifierasset \"asset_name\" qty \"( to_address )\" \"( change_address )\" ( has_ipfs ) \"( ipfs_hash )\" \"( permanent_ipfs_hash )\"\n"
                 + RestrictedActivationWarning() +
-                "\nIssue an qualifier or sub qualifier asset\n"
-                "If the '#' character isn't added, it will be added automatically\n"
-                "Amount is a number between 1 and 10\n"
+                "\nIssue a qualifier or sub-qualifier asset.\n"
+                "If the '#' character isn't added, it will be added automatically.\n"
+                "Amount is a number between 1 and 10.\n"
                 "Asset name must not conflict with any existing asset.\n"
-                "Unit is always set to Zero (0) for qualifier assets\n"
-                "Reissuable is always set to false for qualifier assets\n"
+                "Unit is always set to Zero (0) for qualifier assets.\n"
+                "Reissuable is always set to false for qualifier assets.\n"
 
                 "\nArguments:\n"
-                "1. \"asset_name\"            (string, required) a unique name\n"
-                "2. \"qty\"                   (numeric, optional, default=1) the number of units to be issued\n"
-                "3. \"to_address\"            (string), optional, default=\"\"), address asset will be sent to, if it is empty, address will be generated for you\n"
-                "4. \"change_address\"        (string), optional, default=\"\"), address the the evr change will be sent to, if it is empty, change address will be generated for you\n"
-                "5. \"has_ipfs\"              (boolean, optional, default=false), whether ipfs hash is going to be added to the asset\n"
-                "6. \"ipfs_hash\"             (string, optional but required if has_ipfs = 1), an ipfs hash or a txid hash once RIP5 is activated\n"
+                "1. \"asset_name\"            (string, required) a unique name.\n"
+                "2. \"qty\"                   (numeric, optional, default=1) the number of units to be issued.\n"
+                "3. \"to_address\"            (string, optional, default=\"\") address asset will be sent to; if empty, an address will be generated for you.\n"
+                "4. \"change_address\"        (string, optional, default=\"\") address where Evr change will be sent to; if empty, a change address will be generated for you.\n"
+                "5. \"has_ipfs\"              (boolean, optional, default=false) whether an IPFS hash is going to be added to the asset.\n"
+                "6. \"ipfs_hash\"             (string, optional but required if has_ipfs = 1) an IPFS hash or txid hash once RIP5 is activated.\n"
+                "7. \"permanent_ipfs_hash\"   (string, optional) a permanent IPFS hash for the asset.\n"
 
                 "\nResult:\n"
-                "\"txid\"                     (string) The transaction id\n"
+                "\"txid\"                     (string) The transaction ID.\n"
 
                 "\nExamples:\n"
                 + HelpExampleCli("issuequalifierasset", "\"#ASSET_NAME\" 1000")
                 + HelpExampleCli("issuequalifierasset", "\"ASSET_NAME\" 1000 \"myaddress\"")
                 + HelpExampleCli("issuequalifierasset", "\"#ASSET_NAME\" 1000 \"myaddress\" \"changeaddress\"")
-                + HelpExampleCli("issuequalifierasset", "\"ASSET_NAME\" 1000 \"myaddress\" \"changeaddress\"")
                 + HelpExampleCli("issuequalifierasset", "\"#ASSET_NAME\" 1000 \"myaddress\" \"changeaddress\" true QmTqu3Lk3gmTsQVtjU7rYYM37EAW4xNmbuEAp2Mjr4AV7E")
-                + HelpExampleCli("issuequalifierasset", "\"ASSET_NAME/SUB_QUALIFIER\" 1000 \"myaddress\" \"changeaddress\"")
-                + HelpExampleCli("issuequalifierasset", "\"#ASSET_NAME\"")
+                + HelpExampleCli("issuequalifierasset", "\"ASSET_NAME\" 1000 \"myaddress\" \"changeaddress\" true QmTqu3Lk3gmTsQVtjU7rYYM37EAW4xNmbuEAp2Mjr4AV7E QmPermanentHash 0.01 \"tollAddress\" true true")
         );
 
     CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
@@ -2372,57 +2953,49 @@ UniValue issuequalifierasset(const JSONRPCRequest& request)
 
     // Check asset name and infer assetType
     std::string assetName = request.params[0].get_str();
-
     if (!IsAssetNameAQualifier(assetName)) {
-        std::string temp = QUALIFIER_CHAR + assetName;
-        assetName = temp;
+        assetName = QUALIFIER_CHAR + assetName;
     }
 
     AssetType assetType;
     std::string assetError = "";
     if (!IsAssetNameValid(assetName, assetType, assetError)) {
-        throw JSONRPCError(RPC_INVALID_PARAMETER, std::string("Invalid asset name: ") + assetName + std::string("\nError: ") + assetError);
+        throw JSONRPCError(RPC_INVALID_PARAMETER, std::string("Invalid asset name: ") + assetName + "\nError: " + assetError);
     }
 
     if (assetType != AssetType::QUALIFIER && assetType != AssetType::SUB_QUALIFIER) {
-        throw JSONRPCError(RPC_INVALID_PARAMETER, std::string("Unsupported asset type: ") + AssetTypeToString(assetType) +  " Please use a valid qualifier name" );
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Unsupported asset type: " + AssetTypeToString(assetType) + " Please use a valid qualifier name.");
     }
 
     CAmount nAmount = COIN;
-    if (request.params.size() > 1)
+    if (request.params.size() > 1) {
         nAmount = AmountFromValue(request.params[1]);
+    }
 
     if (nAmount < QUALIFIER_ASSET_MIN_AMOUNT || nAmount > QUALIFIER_ASSET_MAX_AMOUNT) {
-        throw JSONRPCError(RPC_INVALID_PARAMETER, std::string("Invalid parameters for issuing a qualifier asset. Amount must be between 1 and 10"));
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameters for issuing a qualifier asset. Amount must be between 1 and 10.");
     }
 
     std::string address = "";
-    if (request.params.size() > 2)
+    if (request.params.size() > 2) {
         address = request.params[2].get_str();
-
-    if (!address.empty()) {
         CTxDestination destination = DecodeDestination(address);
         if (!IsValidDestination(destination)) {
-            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid Evrmore address: ") + address);
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid Evrmore address: " + address);
         }
     } else {
-        // Create a new address
-        std::string strAccount;
-
+        // Generate a new address if not provided
         if (!pwallet->IsLocked()) {
             pwallet->TopUpKeyPool();
         }
 
-        // Generate a new key that is added to wallet
         CPubKey newKey;
         if (!pwallet->GetKeyFromPool(newKey)) {
-            throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, "Error: Keypool ran out, please call keypoolrefill first");
+            throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, "Error: Keypool ran out, please call keypoolrefill first.");
         }
         CKeyID keyID = newKey.GetID();
-
-        pwallet->SetAddressBook(keyID, strAccount, "receive");
-
         address = EncodeDestination(keyID);
+        pwallet->SetAddressBook(keyID, "", "receive");
     }
 
     std::string change_address = "";
@@ -2431,35 +3004,31 @@ UniValue issuequalifierasset(const JSONRPCRequest& request)
         if (!change_address.empty()) {
             CTxDestination destination = DecodeDestination(change_address);
             if (!IsValidDestination(destination)) {
-                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
-                                   std::string("Invalid Change Address: Invalid Evrmore address: ") + change_address);
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid Evrmore address: " + change_address);
             }
         }
     }
 
-    int units = 0;
-    bool reissuable = false;
-
     bool has_ipfs = false;
-    if (request.params.size() > 4)
+    if (request.params.size() > 4) {
         has_ipfs = request.params[4].get_bool();
-
-    // Check the ipfs
-    std::string ipfs_hash = "";
-    bool fMessageCheck = false;
-    if (request.params.size() > 5 && has_ipfs) {
-        fMessageCheck = true;
-        ipfs_hash = request.params[5].get_str();
     }
 
-    // Reissues don't have an expire time
-    int64_t expireTime = 0;
+    std::string ipfs_hash = "";
+    if (request.params.size() > 5 && has_ipfs) {
+        ipfs_hash = request.params[5].get_str();
+        if (!ipfs_hash.empty())
+            CheckIPFSTxidMessage(ipfs_hash, 0);
+    }
 
-    // Check the message data
-    if (fMessageCheck)
-        CheckIPFSTxidMessage(ipfs_hash, expireTime);
+    std::string permanent_ipfs_hash = request.params.size() > 6 ? request.params[6].get_str() : "";
+    if (!permanent_ipfs_hash.empty())
+        CheckIPFSTxidMessage(permanent_ipfs_hash, 0);
 
-    CNewAsset asset(assetName, nAmount, units, reissuable ? 1 : 0, has_ipfs ? 1 : 0, DecodeAssetData(ipfs_hash));
+    // Units are zero, and reissuable is false
+    CNewAsset asset(assetName, nAmount, 0, 0, has_ipfs ? 1 : 0,
+                    DecodeAssetData(ipfs_hash), DecodeAssetData(permanent_ipfs_hash),
+                    0, "", 0, 0, 0);
 
     CReserveKey reservekey(pwallet);
     CWalletTx transaction;
@@ -2469,51 +3038,58 @@ UniValue issuequalifierasset(const JSONRPCRequest& request)
     CCoinControl crtl;
     crtl.destChange = DecodeDestination(change_address);
 
-    // Create the Transaction
-    if (!CreateAssetTransaction(pwallet, crtl, asset, address, error, transaction, reservekey, nRequiredFee))
+    if (!CreateAssetTransaction(pwallet, crtl, asset, address, error, transaction, reservekey, nRequiredFee)) {
         throw JSONRPCError(error.first, error.second);
+    }
 
-    // Send the Transaction to the network
     std::string txid;
-    if (!SendAssetTransaction(pwallet, transaction, reservekey, error, txid))
+    if (!SendAssetTransaction(pwallet, transaction, reservekey, error, txid)) {
         throw JSONRPCError(error.first, error.second);
+    }
 
     UniValue result(UniValue::VARR);
     result.push_back(txid);
     return result;
 }
 
+
 UniValue issuerestrictedasset(const JSONRPCRequest& request)
 {
-    if (request.fHelp || !AreRestrictedAssetsDeployed() || request.params.size() < 4 || request.params.size() > 9)
+    if (request.fHelp || !AreRestrictedAssetsDeployed() || request.params.size() < 4 || request.params.size() > 15)
         throw std::runtime_error(
-                "issuerestrictedasset \"asset_name\" qty \"verifier\" \"to_address\" \"( change_address )\" (units) ( reissuable ) ( has_ipfs ) \"( ipfs_hash )\"\n"
+                "issuerestrictedasset \"asset_name\" qty \"verifier\" \"to_address\" \"( change_address )\" (units) ( reissuable ) ( has_ipfs ) \"( ipfs_hash )\" \"( permanent_ipfs_hash )\" ( toll_amount ) \"( toll_address )\" ( toll_amount_mutability ) ( toll_address_mutability ) ( remintable )\n"
                 + RestrictedActivationWarning() +
                 "\nIssue a restricted asset.\n"
                 "Restricted asset names must not conflict with any existing restricted asset.\n"
                 "Restricted assets have units set to 0.\n"
-                "Reissuable is true/false for whether additional asset quantity can be created and if the verifier string can be changed\n"
+                "Reissuable is true/false for whether additional asset quantity can be created and if the verifier string can be changed.\n"
 
                 "\nArguments:\n"
-                "1. \"asset_name\"            (string, required) a unique name, starts with '$', if '$' is not there it will be added automatically\n"
-                "2. \"qty\"                   (numeric, required) the quantity of the asset to be issued\n"
-                "3. \"verifier\"              (string, required) the verifier string that will be evaluated when restricted asset transfers are made\n"
-                "4. \"to_address\"            (string, required) address asset will be sent to, this address must meet the verifier string requirements\n"
-                "5. \"change_address\"        (string, optional, default=\"\") address that the evr change will be sent to, if it is empty, change address will be generated for you\n"
-                "6. \"units\"                 (integer, optional, default=0, min=0, max=8) the number of decimals precision for the asset (0 for whole units (\"1\"), 8 for max precision (\"1.00000000\")\n"
-                "7. \"reissuable\"            (boolean, optional, default=true (false for unique assets)) whether future reissuance is allowed\n"
-                "8. \"has_ipfs\"              (boolean, optional, default=false) whether an ipfs hash or txid hash is going to be added to the asset\n"
-                "9. \"ipfs_hash\"             (string, optional but required if has_ipfs = 1) an ipfs hash or a txid hash once RIP5 is activated\n"
+                "1. \"asset_name\"            (string, required) a unique name, starts with '$', if '$' is not there it will be added automatically.\n"
+                "2. \"qty\"                   (numeric, required) the quantity of the asset to be issued.\n"
+                "3. \"verifier\"              (string, required) the verifier string that will be evaluated when restricted asset transfers are made.\n"
+                "4. \"to_address\"            (string, required) address asset will be sent to, this address must meet the verifier string requirements.\n"
+                "5. \"change_address\"        (string, optional, default=\"\") address that the evr change will be sent to, if it is empty, change address will be generated for you.\n"
+                "6. \"units\"                 (integer, optional, default=0, min=0, max=8) the number of decimals precision for the asset (0 for whole units (\"1\"), 8 for max precision (\"1.00000000\").\n"
+                "7. \"reissuable\"            (boolean, optional, default=true (false for unique assets)) whether future reissuance is allowed.\n"
+                "8. \"has_ipfs\"              (boolean, optional, default=false) whether an IPFS hash or txid hash is going to be added to the asset.\n"
+                "9. \"ipfs_hash\"             (string, optional but required if has_ipfs = 1) an IPFS hash or a txid hash once RIP5 is activated.\n"
+                "10. \"permanent_ipfs_hash\"  (string, optional) a permanent IPFS hash for the asset.\n"
+                "11. \"toll_amount\"          (numeric, optional, default=0) the amount of toll fee to be assigned to the asset.\n"
+                "12. \"toll_address\"         (string, optional, default=\"\") address to receive the toll fee, if it is empty, the default toll address will be used.\n"
+                "13. \"toll_amount_mutability\" (boolean, optional, default=false) whether future changing is allowed for the toll amount.\n"
+                "14. \"toll_address_mutability\" (boolean, optional, default=false) whether future changing is allowed for the toll address.\n"
+                "15. \"remintable\" (boolean, optional, default=true) whether the ability to remint assets that are burned is allowed.\n"
 
                 "\nResult:\n"
-                "\"txid\"                     (string) The transaction id\n"
+                "\"txid\"                     (string) The transaction ID.\n"
 
                 "\nExamples:\n"
-                + HelpExampleCli("issuerestrictedasset", "\"$ASSET_NAME\" 1000 \"#KYC & !#AML\" \"myaddress\"")
                 + HelpExampleCli("issuerestrictedasset", "\"$ASSET_NAME\" 1000 \"#KYC & !#AML\" \"myaddress\"")
                 + HelpExampleCli("issuerestrictedasset", "\"$ASSET_NAME\" 1000 \"#KYC & !#AML\" \"myaddress\" \"changeaddress\" 5")
                 + HelpExampleCli("issuerestrictedasset", "\"$ASSET_NAME\" 1000 \"#KYC & !#AML\" \"myaddress\" \"changeaddress\" 8 true")
                 + HelpExampleCli("issuerestrictedasset", "\"$ASSET_NAME\" 1000 \"#KYC & !#AML\" \"myaddress\" \"changeaddress\" 0 false true QmTqu3Lk3gmTsQVtjU7rYYM37EAW4xNmbuEAp2Mjr4AV7E")
+                + HelpExampleCli("issuerestrictedasset", "\"$ASSET_NAME\" 1000 \"#KYC & !#AML\" \"myaddress\" \"changeaddress\" 0 false true QmTqu3Lk3gmTsQVtjU7rYYM37EAW4xNmbuEAp2Mjr4AV7E QmPermanentHash 0.01 \"tollAddress\" true true true")
         );
 
     CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
@@ -2531,22 +3107,19 @@ UniValue issuerestrictedasset(const JSONRPCRequest& request)
     AssetType assetType;
     std::string assetError = "";
 
-    if (!IsAssetNameAnRestricted(assetName))
-    {
-        std::string temp = RESTRICTED_CHAR + assetName;
-        assetName = temp;
+    if (!IsAssetNameAnRestricted(assetName)) {
+        assetName = RESTRICTED_CHAR + assetName;
     }
 
     if (!IsAssetNameValid(assetName, assetType, assetError)) {
-        throw JSONRPCError(RPC_INVALID_PARAMETER, std::string("Invalid asset name: ") + assetName + std::string("\nError: ") + assetError);
+        throw JSONRPCError(RPC_INVALID_PARAMETER, std::string("Invalid asset name: ") + assetName + "\nError: " + assetError);
     }
 
-    // Check for unsupported asset types, only restricted assets are allowed for this rpc call
     if (assetType != AssetType::RESTRICTED) {
-            throw JSONRPCError(RPC_INVALID_PARAMETER, std::string("Unsupported asset type: ") + AssetTypeToString(assetType));
+        throw JSONRPCError(RPC_INVALID_PARAMETER, std::string("Unsupported asset type: ") + AssetTypeToString(assetType));
     }
 
-    // Get the remaining three required parameters
+    // Parse required parameters
     CAmount nAmount = AmountFromValue(request.params[1]);
     std::string verifier_string = request.params[2].get_str();
     std::string to_address = request.params[3].get_str();
@@ -2557,7 +3130,6 @@ UniValue issuerestrictedasset(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid Evrmore address: ") + to_address);
     }
 
-
     std::string verifierStripped = GetStrippedVerifierString(verifier_string);
 
     // Validate the verifier string with the given to_address
@@ -2565,50 +3137,56 @@ UniValue issuerestrictedasset(const JSONRPCRequest& request)
     if (!ContextualCheckVerifierString(passets, verifierStripped, to_address, strError))
         throw JSONRPCError(RPC_INVALID_PARAMETER, strError);
 
-    // Get the change address if one was given
-    std::string change_address = "";
-    if (request.params.size() > 4)
-        change_address = request.params[4].get_str();
+    // Parse optional parameters
+    std::string change_address = request.params.size() > 4 ? request.params[4].get_str() : "";
     if (!change_address.empty()) {
-        CTxDestination destination = DecodeDestination(change_address);
-        if (!IsValidDestination(destination)) {
-            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
-                               std::string("Invalid Change Address: Invalid Evrmore address: ") + change_address);
+        CTxDestination changeDest = DecodeDestination(change_address);
+        if (!IsValidDestination(changeDest)) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid Change Address: Invalid Evrmore address: " + change_address);
         }
     }
 
-    int units = MIN_UNIT;
-    if (request.params.size() > 5)
-        units = request.params[5].get_int();
-
+    int units = request.params.size() > 5 ? request.params[5].get_int() : MIN_UNIT;
     if (units < MIN_UNIT || units > MAX_UNIT)
         throw JSONRPCError(RPC_INVALID_PARAMETER, "Units must be between 0 and 8");
 
-    // Restristed assets are reissuable by default
-    bool reissuable = true;
-    if (request.params.size() > 6)
-        reissuable = request.params[6].get_bool();
+    bool reissuable = request.params.size() > 6 ? request.params[6].get_bool() : true;
+    bool has_ipfs = request.params.size() > 7 ? request.params[7].get_bool() : false;
 
-    bool has_ipfs = false;
-    if (request.params.size() > 7)
-        has_ipfs = request.params[7].get_bool();
-
-    // Check the ipfs
+    // Validate IPFS hash
     std::string ipfs_hash = "";
-    bool fMessageCheck = false;
     if (request.params.size() > 8 && has_ipfs) {
-        fMessageCheck = true;
         ipfs_hash = request.params[8].get_str();
+        if (!ipfs_hash.empty())
+            CheckIPFSTxidMessage(ipfs_hash, 0);
     }
 
-    // issues don't have an expire time
-    int64_t expireTime = 0;
+    // New parameters
+    std::string permanent_ipfs_hash = request.params.size() > 9 ? request.params[9].get_str() : "";
+    if (!permanent_ipfs_hash.empty())
+        CheckIPFSTxidMessage(permanent_ipfs_hash, 0);
 
-    // Check the message data
-    if (fMessageCheck)
-        CheckIPFSTxidMessage(ipfs_hash, expireTime);
+    CAmount toll_amount = request.params.size() > 10 ? AmountFromValue(request.params[10]) : 0;
+    std::string toll_address = request.params.size() > 11 ? request.params[11].get_str() : "";
+    if (!toll_address.empty()) {
+        CTxDestination tollDest = DecodeDestination(toll_address);
+        if (!IsValidDestination(tollDest)) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid Toll Address: Invalid Evrmore address: " + toll_address);
+        }
+    }
 
-    CNewAsset asset(assetName, nAmount, units, reissuable ? 1 : 0, has_ipfs ? 1 : 0, DecodeAssetData(ipfs_hash));
+    bool toll_amount_mutability = request.params.size() > 12 ? request.params[12].get_bool() : false;
+    bool toll_address_mutability = request.params.size() > 13 ? request.params[13].get_bool() : false;
+    bool remintable = request.params.size() > 14 ? request.params[14].get_bool() : true;
+
+    // If tolls isn't active, don't set the remintable variable, because it would be a v2 asset, and get rejected
+    if(!IsTollsActive()) {
+        remintable = false;
+    }
+
+    CNewAsset asset(assetName, nAmount, units, reissuable ? 1 : 0, has_ipfs ? 1 : 0,
+                    DecodeAssetData(ipfs_hash), DecodeAssetData(permanent_ipfs_hash),
+                    toll_amount, toll_address, toll_amount_mutability, toll_address_mutability, remintable);
 
     CReserveKey reservekey(pwallet);
     CWalletTx transaction;
@@ -2634,33 +3212,36 @@ UniValue issuerestrictedasset(const JSONRPCRequest& request)
 
 UniValue reissuerestrictedasset(const JSONRPCRequest& request)
 {
-    if (request.fHelp || !AreRestrictedAssetsDeployed() || request.params.size() < 3 || request.params.size() > 9)
+    if (request.fHelp || !AreRestrictedAssetsDeployed() || request.params.size() < 3 || request.params.size() > 15)
         throw std::runtime_error(
-                "reissuerestrictedasset \"asset_name\" qty to_address ( change_verifier ) ( \"new_verifier\" ) \"( change_address )\" ( new_units ) ( reissuable ) \"( new_ipfs )\"\n"
+                "reissuerestrictedasset \"asset_name\" qty to_address ( change_verifier ) ( \"new_verifier\" ) \"( change_address )\" ( new_units ) ( reissuable ) \"( new_ipfs )\" \"( permanent_ipfs )\" ( change_toll_amount ) ( toll_amount ) \"( toll_address ) ( toll_amount_mutability ) ( toll_address_mutability )\"\n"
                 + RestrictedActivationWarning() +
-                "\nReissue an already created restricted asset\n"
-                "Reissuable is true/false for whether additional asset quantity can be created and if the verifier string can be changed\n"
+                "\nReissue an already created restricted asset.\n"
+                "Reissuable is true/false for whether additional asset quantity can be created and if the verifier string can be changed.\n"
 
                 "\nArguments:\n"
-                "1. \"asset_name\"            (string, required) a unique name, starts with '$'\n"
-                "2. \"qty\"                   (numeric, required) the additional quantity of the asset to be issued\n"
-                "3. \"to_address\"            (string, required) address asset will be sent to, this address must meet the verifier string requirements\n"
-                "4. \"change_verifier\"       (boolean, optional, default=false) if the verifier string will get changed\n"
-                "5. \"new_verifier\"          (string, optional, default=\"\") the new verifier string that will be evaluated when restricted asset transfers are made\n"
-                "6. \"change_address\"        (string, optional, default=\"\") address that the evr change will be sent to, if it is empty, change address will be generated for you\n"
-                "7. \"new_units\"             (numeric, optional, default=-1) the new units that will be associated with the asset\n"
-                "8. \"reissuable\"            (boolean, optional, default=true (false for unique assets)) whether future reissuance is allowed\n"
-                "9. \"new_ipfs\"              (string, optional, default=\"\") whether to update the current ipfs hash or txid once RIP5 is active\n"
+                "1. \"asset_name\"               (string, required) name of the restricted asset to be reissued.\n"
+                "2. \"qty\"                      (numeric, required) the additional quantity of the asset to be issued.\n"
+                "3. \"to_address\"               (string, required) address asset will be sent to; this address must meet the verifier string requirements.\n"
+                "4. \"change_verifier\"          (boolean, optional, default=false) whether the verifier string will get changed.\n"
+                "5. \"new_verifier\"             (string, optional, default=\"\") the new verifier string.\n"
+                "6. \"change_address\"           (string, optional, default=\"\") address that the Evr change will be sent to; if empty, a change address will be generated.\n"
+                "7. \"new_units\"                (numeric, optional, default=-1) the new units for the asset.\n"
+                "8. \"reissuable\"               (boolean, optional, default=true) whether future reissuance is allowed.\n"
+                "9. \"new_ipfs\"                 (string, optional, default=\"\") new IPFS hash or txid.\n"
+                "10. \"permanent_ipfs\"          (string, optional, default=\"\") new permanent IPFS hash for the asset.\n"
+                "11. \"change_toll_amount\"      (boolean, optional, default=false) whether the toll amount is being changed.\n"
+                "12. \"toll_amount\"             (numeric, optional, default=0) the toll amount to be associated with the asset.\n"
+                "13. \"toll_address\"            (string, optional, default=\"\") the toll address for the asset.\n"
+                "14. \"toll_amount_mutability\"  (boolean, optional, default=true) whether future changing is allowed on toll amount.\n"
+                "15. \"toll_address_mutability\" (boolean, optional, default=true) whether future changing is allowed on toll address.\n"
 
                 "\nResult:\n"
-                "\"txid\"                     (string) The transaction id\n"
+                "\"txid\"                        (string) The transaction ID.\n"
 
                 "\nExamples:\n"
-                + HelpExampleCli("reissuerestrictedasset", "\"$ASSET_NAME\" 1000  \"myaddress\" true \"KYC & !AML\"")
-                + HelpExampleCli("reissuerestrictedasset", "\"$ASSET_NAME\" 1000  \"myaddress\" true \"KYC & !AML\" ")
-                + HelpExampleCli("reissuerestrictedasset", "\"$ASSET_NAME\" 1000  \"myaddress\" true \"KYC & !AML\" \"changeaddress\"")
-                + HelpExampleCli("reissuerestrictedasset", "\"$ASSET_NAME\" 1000  \"myaddress\" true \"KYC & !AML\" \"changeaddress\" -1 true")
-                + HelpExampleCli("reissuerestrictedasset", "\"$ASSET_NAME\" 1000  \"myaddress\" false \"\" \"changeaddress\" -1 false QmTqu3Lk3gmTsQVtjU7rYYM37EAW4xNmbuEAp2Mjr4AV7E")
+                + HelpExampleCli("reissuerestrictedasset", "\"$ASSET_NAME\" 1000 \"myaddress\" true \"KYC & !AML\"")
+                + HelpExampleCli("reissuerestrictedasset", "\"$ASSET_NAME\" 1000 \"myaddress\" false \"\" \"changeaddress\" -1 true QmTqu3Lk3gmTsQVtjU7rYYM37EAW4xNmbuEAp2Mjr4AV7E QmPermanentHash true 100 \"toll_address\" true true")
         );
 
     CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
@@ -2673,80 +3254,81 @@ UniValue reissuerestrictedasset(const JSONRPCRequest& request)
 
     EnsureWalletIsUnlocked(pwallet);
 
-    // Check asset name and infer assetType
+    // Parse parameters
     std::string assetName = request.params[0].get_str();
-    AssetType assetType;
-    std::string assetError = "";
-
-    if (!IsAssetNameAnRestricted(assetName))
-    {
-        std::string temp = RESTRICTED_CHAR + assetName;
-        assetName = temp;
-    }
-
-    if (!IsAssetNameValid(assetName, assetType, assetError)) {
-        throw JSONRPCError(RPC_INVALID_PARAMETER, std::string("Invalid asset name: ") + assetName + std::string("\nError: ") + assetError);
-    }
-
-    // Check for unsupported asset types, only restricted assets are allowed for this rpc call
-    if (assetType != AssetType::RESTRICTED) {
-        throw JSONRPCError(RPC_INVALID_PARAMETER, std::string("Unsupported asset type: ") + AssetTypeToString(assetType));
-    }
-
     CAmount nAmount = AmountFromValue(request.params[1]);
     std::string to_address = request.params[2].get_str();
+    bool fChangeVerifier = request.params.size() > 3 ? request.params[3].get_bool() : false;
+    std::string verifier_string = request.params.size() > 4 ? request.params[4].get_str() : "";
+    std::string change_address = request.params.size() > 5 ? request.params[5].get_str() : "";
+    int newUnits = request.params.size() > 6 ? request.params[6].get_int() : -1;
+    bool reissuable = request.params.size() > 7 ? request.params[7].get_bool() : true;
+    std::string new_ipfs_data = request.params.size() > 8 ? request.params[8].get_str() : "";
+    std::string permanent_ipfs = request.params.size() > 9 ? request.params[9].get_str() : "";
+    bool change_toll_amount = request.params.size() > 10 ? request.params[10].get_bool() : false;
+    CAmount toll_amount = request.params.size() > 11 ? AmountFromValue(request.params[11]) : 0;
+    std::string toll_address = request.params.size() > 12 ? request.params[12].get_str() : "";
+    bool toll_amount_mutability = request.params.size() > 13 ? request.params[13].get_bool() : true;
+    bool toll_address_mutability = request.params.size() > 14 ? request.params[14].get_bool() : true;
+
+    // Validate asset name and address
+    AssetType assetType;
+    std::string assetError = "";
+    if (!IsAssetNameAnRestricted(assetName)) {
+        assetName = RESTRICTED_CHAR + assetName;
+    }
+    if (!IsAssetNameValid(assetName, assetType, assetError)) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid asset name: " + assetName + "\nError: " + assetError);
+    }
+    if (assetType != AssetType::RESTRICTED) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Unsupported asset type: " + AssetTypeToString(assetType));
+    }
 
     CTxDestination to_dest = DecodeDestination(to_address);
     if (!IsValidDestination(to_dest)) {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid Evrmore address: ") + to_address);
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid Evrmore address: " + to_address);
     }
 
-    bool fChangeVerifier = false;
-    if (request.params.size() > 3)
-        fChangeVerifier = request.params[3].get_bool();
-
-    std::string verifier_string = "";
-    if (request.params.size() > 4)
-        verifier_string = request.params[4].get_str();
-
-    std::string change_address = "";
-    if (request.params.size() > 5) {
-        change_address = request.params[5].get_str();
+    if (!change_address.empty()) {
         CTxDestination change_dest = DecodeDestination(change_address);
         if (!IsValidDestination(change_dest)) {
-            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
-                               std::string("Invalid Change Address: Invalid Evrmore address: ") + change_address);
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid Evrmore address: " + change_address);
         }
     }
 
-    int newUnits = -1;
-    if (request.params.size() > 6)
-        newUnits = request.params[6].get_int();
-
-    if (newUnits < -1 || newUnits > MAX_UNIT)
-        throw JSONRPCError(RPC_INVALID_PARAMETER, "Units must be between -1 and 8, -1 means don't change the current units");
-
-    bool reissuable = true;
-    if (request.params.size() > 7)
-        reissuable = request.params[7].get_bool();
-
-    std::string new_ipfs_data = "";
-    bool fMessageCheck = false;
-
-    if (request.params.size() > 8) {
-        fMessageCheck = true;
-        new_ipfs_data = request.params[8].get_str();
+    if (!toll_address.empty()) {
+        CTxDestination toll_dest = DecodeDestination(toll_address);
+        if (!IsValidDestination(toll_dest)) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid Toll Address: " + toll_address);
+        }
     }
 
-    // Reissues don't have an expire time
-    int64_t expireTime = 0;
+    if (newUnits < -1 || newUnits > MAX_UNIT) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Units must be between -1 and 8; -1 means don't change the current units.");
+    }
 
-    // Check the message data
-    if (fMessageCheck)
-        CheckIPFSTxidMessage(new_ipfs_data, expireTime);
+    // Validate IPFS hashes
+    if (!new_ipfs_data.empty()) {
+        CheckIPFSTxidMessage(new_ipfs_data, 0);
+    }
+    if (!permanent_ipfs.empty()) {
+        CheckIPFSTxidMessage(permanent_ipfs, 0);
+    }
 
-    CReissueAsset reissueAsset(assetName, nAmount, newUnits, reissuable ? 1 : 0, DecodeAssetData(new_ipfs_data));
+    // Reissuing rpc call can't be used to remint
+    // Use remint rpccall
+    bool reminting_asset = false;
 
+    // Don't change this value if it is already true
+    bool remintable = true;
+
+    // Create the reissue asset object
+    CReissueAsset reissueAsset(assetName, nAmount, newUnits, reissuable,
+                               DecodeAssetData(new_ipfs_data), DecodeAssetData(permanent_ipfs),
+                               change_toll_amount, toll_amount, toll_address, reminting_asset,
+                               toll_amount_mutability, toll_address_mutability, remintable);
+
+    // Create and send the transaction
     CReserveKey reservekey(pwallet);
     CWalletTx transaction;
     CAmount nRequiredFee;
@@ -2757,18 +3339,18 @@ UniValue reissuerestrictedasset(const JSONRPCRequest& request)
 
     std::string verifierStripped = GetStrippedVerifierString(verifier_string);
 
-    // Create the Transaction
-    if (!CreateReissueAssetTransaction(pwallet, crtl, reissueAsset, to_address, error, transaction, reservekey, nRequiredFee, fChangeVerifier ? &verifierStripped : nullptr))
+    if (!CreateReissueAssetTransaction(pwallet, crtl, reissueAsset, to_address, error, transaction, reservekey, nRequiredFee, fChangeVerifier ? &verifierStripped : nullptr)) {
         throw JSONRPCError(error.first, error.second);
+    }
 
-    std::string strError = "";
-    if (!ContextualCheckReissueAsset(passets, reissueAsset, strError, *transaction.tx.get()))
-        throw JSONRPCError(RPC_INVALID_REQUEST, strError);
+    if (!ContextualCheckReissueAsset(passets, reissueAsset, assetError, *transaction.tx.get())) {
+        throw JSONRPCError(RPC_INVALID_REQUEST, assetError);
+    }
 
-    // Send the Transaction to the network
     std::string txid;
-    if (!SendAssetTransaction(pwallet, transaction, reservekey, error, txid))
+    if (!SendAssetTransaction(pwallet, transaction, reservekey, error, txid)) {
         throw JSONRPCError(error.first, error.second);
+    }
 
     UniValue result(UniValue::VARR);
     result.push_back(txid);
@@ -3037,27 +3619,31 @@ static const CRPCCommand commands[] =
 { //  category    name                          actor (function)             argNames
   //  ----------- ------------------------      -----------------------      ----------
 #ifdef ENABLE_WALLET
-    { "assets",   "issue",                      &issue,                      {"asset_name","qty","to_address","change_address","units","reissuable","has_ipfs","ipfs_hash"} },
-    { "assets",   "issueunique",                &issueunique,                {"root_name", "asset_tags", "ipfs_hashes", "to_address", "change_address"}},
+    { "assets",   "issue",                      &issue,                      {"asset_name","qty","to_address","change_address","units","reissuable","has_ipfs","ipfs_hash","permanent_ipfs_hash", "toll_amount", "toll_address", "toll_amount_mutability", "toll_address_mutability", "remintable"}},
+    { "assets",   "issueunique",                &issueunique,                {"root_name", "asset_tags", "ipfs_hashes", "to_address", "change_address", "permanent_ipfs_hash", "toll_amount", "toll_address", "toll_amount_mutability", "toll_address_mutability"}},
     { "assets",   "listmyassets",               &listmyassets,               {"asset", "verbose", "count", "start", "confs"}},
 #endif
     { "assets",   "listassetbalancesbyaddress", &listassetbalancesbyaddress, {"address", "onlytotal", "count", "start"} },
     { "assets",   "getassetdata",               &getassetdata,               {"asset_name"}},
     { "assets",   "listaddressesbyasset",       &listaddressesbyasset,       {"asset_name", "onlytotal", "count", "start"}},
+    { "assets",   "getcalculatedtoll",          &getcalculatedtoll,          {"asset_name", "amount", "change_amount", "overwrite_toll_fee"}},
 #ifdef ENABLE_WALLET
     { "assets",   "transferfromaddress",        &transferfromaddress,        {"asset_name", "from_address", "qty", "to_address", "message", "expire_time", "evr_change_address", "asset_change_address"}},
     { "assets",   "transferfromaddresses",      &transferfromaddresses,      {"asset_name", "from_addresses", "qty", "to_address", "message", "expire_time", "evr_change_address", "asset_change_address"}},
     { "assets",   "transfer",                   &transfer,                   {"asset_name", "qty", "to_address", "message", "expire_time", "change_address", "asset_change_address"}},
-    { "assets",   "reissue",                    &reissue,                    {"asset_name", "qty", "to_address", "change_address", "reissuable", "new_units", "new_ipfs"}},
+    { "assets",   "reissue",                    &reissue,                    {"asset_name", "qty", "to_address", "change_address", "reissuable", "new_units", "new_ipfs", "permanent_ipfs", "change_toll_amount", "toll_amount", "toll_address", "toll_amount_mutability", "toll_address_mutability"}},
+    { "assets",   "updatemetadata",             &updatemetadata,             {"asset_name", "change_address", "new_ipfs", "permanent_ipfs", "toll_address", "change_toll_amount", "toll_amount", "toll_amount_mutability", "toll_address_mutability"}},
+    { "assets",   "remint",                     &remint,                     {"asset_name", "qty", "to_address", "change_address", "remintable"}},
 #endif
     { "assets",   "listassets",                 &listassets,                 {"asset", "verbose", "count", "start"}},
     { "assets",   "getcacheinfo",               &getcacheinfo,               {}},
+    { "assets",   "getburnaddresses",           &getburnaddresses,               {}},
 
 #ifdef ENABLE_WALLET
     { "restricted assets",   "transferqualifier",          &transferqualifier,          {"qualifier_name", "qty", "to_address", "change_address", "message", "expire_time"}},
-    { "restricted assets",   "issuerestrictedasset",       &issuerestrictedasset,       {"asset_name","qty","verifier","to_address","change_address","units","reissuable","has_ipfs","ipfs_hash"} },
-    { "restricted assets",   "issuequalifierasset",        &issuequalifierasset,        {"asset_name","qty","to_address","change_address","has_ipfs","ipfs_hash"} },
-    { "restricted assets",   "reissuerestrictedasset",     &reissuerestrictedasset,     {"asset_name", "qty", "change_verifier", "new_verifier", "to_address", "change_address", "new_units", "reissuable", "new_ipfs"}},
+    { "restricted assets",   "issuerestrictedasset",       &issuerestrictedasset,       {"asset_name","qty","verifier","to_address","change_address","units","reissuable","has_ipfs","ipfs_hash","permanent_ipfs_hash","toll_amount","toll_address","toll_amount_mutability","toll_address_mutability"}},
+    { "restricted assets",   "issuequalifierasset",        &issuequalifierasset,        {"asset_name","qty","to_address","change_address","has_ipfs","ipfs_hash","permanent_ipfs_hash","toll_amount","toll_address","toll_amount_mutability","toll_address_mutability"} },
+    { "restricted assets",   "reissuerestrictedasset",     &reissuerestrictedasset,     {"asset_name", "qty", "change_verifier", "new_verifier", "to_address", "change_address", "new_units", "reissuable", "new_ipfs", "permanent_ipfs", "change_toll_amount", "toll_amount", "toll_address", "toll_amount_mutability", "toll_address_mutability"}},
     { "restricted assets",   "addtagtoaddress",            &addtagtoaddress,            {"tag_name", "to_address", "change_address", "asset_data"}},
     { "restricted assets",   "removetagfromaddress",       &removetagfromaddress,       {"tag_name", "to_address", "change_address", "asset_data"}},
     { "restricted assets",   "freezeaddress",              &freezeaddress,              {"asset_name", "address", "change_address", "asset_data"}},

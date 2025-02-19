@@ -25,9 +25,8 @@ def create_block(hash_prev, coinbase, n_time=None):
     block.calc_sha256()
     return block
 
-# EVR-TODO: Update to the latest regtest genesis block time
 # Genesis block time (regtest)
-REGTEST_GENISIS_BLOCK_TIME = 1646092801
+REGTEST_GENISIS_BLOCK_TIME = 1667074564
 
 # From BIP141
 WITNESS_COMMITMENT_HEADER = b"\xaa\x21\xa9\xed"
@@ -90,7 +89,7 @@ def create_coinbase(height, pubkey = None):
                 #ser_string(serialize_script_num(height)), 0xffffffff))
                 script_BIP34_coinbase_height(height), 0xffffffff))
     coin_base_output = CTxOut()
-    coin_base_output.nValue = 5000 * COIN
+    coin_base_output.nValue = 2778 * COIN
     halvings = int(height/150) # regtest
     coin_base_output.nValue >>= halvings
     if pubkey is not None:

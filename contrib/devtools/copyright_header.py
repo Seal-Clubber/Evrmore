@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # Copyright (c) 2016 The Bitcoin Core developers
 # Copyright (c) 2017-2020 The Raven Core developers
+# Copyright (c) 2022-2024 The Evrmore Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -85,6 +86,8 @@ EXPECTED_HOLDER_NAMES = [
     "Raven Core Developers\n",
     "the Raven Core developers\n",
     "The Raven developers\n",
+    "The Evrmore Core developers\n",
+    "The Evrmore developers\n",
     "The LevelDB Authors\. All rights reserved\.\n",
     "BitPay Inc\.\n",
     "BitPay, Inc\.\n",
@@ -337,7 +340,7 @@ def write_file_lines(filename, file_lines):
 COPYRIGHT = 'Copyright \(c\)'
 YEAR = "20[0-9][0-9]"
 YEAR_RANGE = '(%s)(-%s)?' % (YEAR, YEAR)
-HOLDER = 'The Raven Core developers'
+HOLDER = 'The Evrmore Core developers'
 UPDATEABLE_LINE_COMPILED = re.compile(' '.join([COPYRIGHT, YEAR_RANGE, HOLDER]))
 
 def get_updatable_copyright_line(file_lines):
@@ -459,8 +462,9 @@ def get_header_lines(header, start_year, end_year):
     return [line + '\n' for line in lines]
 
 CPP_HEADER = '''
-// Copyright (c) %s The Bitcoin Core developers
+// Copyright (c) 2009-2016 The Bitcoin Core developers
 // Copyright (c) 2017-2020 The Raven Core developers
+// Copyright (c) 2022-%s The Evrmore Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 '''
@@ -469,8 +473,9 @@ def get_cpp_header_lines_to_insert(start_year, end_year):
     return reversed(get_header_lines(CPP_HEADER, start_year, end_year))
 
 PYTHON_HEADER = '''
-# Copyright (c) %s The Bitcoin Core developers
+# Copyright (c) 2009-2016 The Bitcoin Core developers
 # Copyright (c) 2017-2020 The Raven Core developers
+# Copyright (c) 2022-%s The Evrmore Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 '''

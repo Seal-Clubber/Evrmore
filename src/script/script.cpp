@@ -356,16 +356,28 @@ bool CScript::IsTransferAsset() const
     return false;
 }
 
-bool CScript::IsNullAsset() const
+bool CScript::IsNullAsset(bool fForkActive) const
 {
-    return IsNullAssetTxDataScript() || IsNullGlobalRestrictionAssetTxDataScript() || IsNullAssetVerifierTxDataScript();
+    return IsNullAssetTxDataScript(fForkActive) || IsNullGlobalRestrictionAssetTxDataScript() || IsNullAssetVerifierTxDataScript();
 }
 
-bool CScript::IsNullAssetTxDataScript() const
+bool CScript::IsNullAssetTxDataScript(bool fForkActive) const
 {
-    return (this->size() > 23 &&
+    bool p2pkh =  (this->size() > 23 &&
             (*this)[0] == OP_EVR_ASSET &&
             (*this)[1] == 0x14);
+
+    bool p2sh = false;
+
+    if (fForkActive) {
+        p2sh = (this->size() > 23 &&
+                (*this)[0] == OP_EVR_ASSET &&
+                (*this)[1] == OP_1NEGATE &&
+                (*this)[2] == 0x14);
+    }
+
+    return p2sh || p2pkh;
+
 }
 
 bool CScript::IsNullGlobalRestrictionAssetTxDataScript() const

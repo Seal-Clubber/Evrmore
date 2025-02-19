@@ -120,7 +120,7 @@ void WalletTxToJSON(const CWalletTx& wtx, UniValue& entry)
 //    }
     entry.push_back(Pair("bip125-replaceable", rbfStatus));
 
-    for (const std::pair<std::string, std::string>& item : wtx.mapValue)
+    for (const std::pair<const std::string, std::string>& item : wtx.mapValue)
         entry.push_back(Pair(item.first, item.second));
 }
 
@@ -419,7 +419,7 @@ UniValue getaddressesbyaccount(const JSONRPCRequest& request)
 
     // Find all addresses that have the given account
     UniValue ret(UniValue::VARR);
-    for (const std::pair<CTxDestination, CAddressBookData>& item : pwallet->mapAddressBook) {
+    for (const std::pair<const CTxDestination, CAddressBookData>& item : pwallet->mapAddressBook) {
         const CTxDestination& dest = item.first;
         const std::string& strName = item.second.name;
         if (strName == strAccount) {
@@ -476,7 +476,7 @@ UniValue sendtoaddress(const JSONRPCRequest& request)
 
     if (request.fHelp || request.params.size() < 2 || request.params.size() > 7)
         throw std::runtime_error(
-            "sendtoaddress \"address\" amount ( \"comment\" \"comment_to\" subtractfeefromamount replaceable conf_target \"estimate_mode\")\n"
+            "sendtoaddress \"address\" amount ( \"comment\" \"comment_to\" subtractfeefromamount conf_target \"estimate_mode\")\n"
             "\nSend an amount to a given address.\n"
             + HelpRequiringPassphrase(pwallet) +
             "\nArguments:\n"
@@ -561,7 +561,7 @@ UniValue sendfromaddress(const JSONRPCRequest& request)
 
     if (request.fHelp || request.params.size() < 3 || request.params.size() > 8)
         throw std::runtime_error(
-            "sendfromaddress \"from_address\" \"to_address\" amount ( \"comment\" \"comment_to\" subtractfeefromamount replaceable conf_target \"estimate_mode\")\n"
+            "sendfromaddress \"from_address\" \"to_address\" amount ( \"comment\" \"comment_to\" subtractfeefromamount conf_target \"estimate_mode\")\n"
             "\nSend an amount from a specific address to a given address. All evr change will get sent back to the from_address\n"
             + HelpRequiringPassphrase(pwallet) +
             "\nArguments:\n"
@@ -640,14 +640,14 @@ UniValue sendfromaddress(const JSONRPCRequest& request)
 
     // Wallet comments
     CWalletTx wtx;
-    if (!request.params[3].isNull() && !request.params[2].get_str().empty())
-        wtx.mapValue["comment"] = request.params[2].get_str();
-    if (!request.params[4].isNull() && !request.params[3].get_str().empty())
-        wtx.mapValue["to"]      = request.params[3].get_str();
+    if (!request.params[3].isNull() && !request.params[3].get_str().empty())
+        wtx.mapValue["comment"] = request.params[3].get_str();
+    if (!request.params[4].isNull() && !request.params[4].get_str().empty())
+        wtx.mapValue["to"]      = request.params[4].get_str();
 
     bool fSubtractFeeFromAmount = false;
     if (!request.params[5].isNull()) {
-        fSubtractFeeFromAmount = request.params[4].get_bool();
+        fSubtractFeeFromAmount = request.params[5].get_bool();
     }
 
     if (!request.params[6].isNull()) {
@@ -655,7 +655,7 @@ UniValue sendfromaddress(const JSONRPCRequest& request)
     }
 
     if (!request.params[7].isNull()) {
-        if (!FeeModeFromString(request.params[8].get_str(), coin_control.m_fee_mode)) {
+        if (!FeeModeFromString(request.params[7].get_str(), coin_control.m_fee_mode)) {
             throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid estimate_mode parameter");
         }
     }
@@ -666,8 +666,6 @@ UniValue sendfromaddress(const JSONRPCRequest& request)
 
     return wtx.GetHash().GetHex();
 }
-
-
 
 UniValue listaddressgroupings(const JSONRPCRequest& request)
 {
@@ -831,7 +829,7 @@ UniValue getreceivedbyaddress(const JSONRPCRequest& request)
 
     // Tally
     CAmount nAmount = 0;
-    for (const std::pair<uint256, CWalletTx>& pairWtx : pwallet->mapWallet) {
+    for (const std::pair<const uint256, CWalletTx>& pairWtx : pwallet->mapWallet) {
         const CWalletTx& wtx = pairWtx.second;
         if (wtx.IsCoinBase() || !CheckFinalTx(*wtx.tx))
             continue;
@@ -887,7 +885,7 @@ UniValue getreceivedbyaccount(const JSONRPCRequest& request)
 
     // Tally
     CAmount nAmount = 0;
-    for (const std::pair<uint256, CWalletTx>& pairWtx : pwallet->mapWallet) {
+    for (const std::pair<const uint256, CWalletTx>& pairWtx : pwallet->mapWallet) {
         const CWalletTx& wtx = pairWtx.second;
         if (wtx.IsCoinBase() || !CheckFinalTx(*wtx.tx))
             continue;
@@ -1130,7 +1128,7 @@ UniValue sendmany(const JSONRPCRequest& request)
 
     if (request.fHelp || request.params.size() < 2 || request.params.size() > 8)
         throw std::runtime_error(
-            "sendmany \"fromaccount\" {\"address\":amount,...} ( minconf \"comment\" [\"address\",...] replaceable conf_target \"estimate_mode\")\n"
+            "sendmany \"fromaccount\" {\"address\":amount,...} ( minconf \"comment\" [\"address\",...] conf_target \"estimate_mode\")\n"
             "\nSend multiple times. Amounts are double-precision floating point numbers."
             + HelpRequiringPassphrase(pwallet) + "\n"
             "\nArguments:\n"
@@ -1451,7 +1449,7 @@ UniValue ListReceived(CWallet * const pwallet, const UniValue& params, bool fByA
 
     // Tally
     std::map<CTxDestination, tallyitem> mapTally;
-    for (const std::pair<uint256, CWalletTx>& pairWtx : pwallet->mapWallet) {
+    for (const std::pair<const uint256, CWalletTx>& pairWtx : pwallet->mapWallet) {
         const CWalletTx& wtx = pairWtx.second;
 
         if (wtx.IsCoinBase() || !CheckFinalTx(*wtx.tx))
@@ -1483,7 +1481,7 @@ UniValue ListReceived(CWallet * const pwallet, const UniValue& params, bool fByA
     // Reply
     UniValue ret(UniValue::VARR);
     std::map<std::string, tallyitem> mapAccountTally;
-    for (const std::pair<CTxDestination, CAddressBookData>& item : pwallet->mapAddressBook) {
+    for (const std::pair<const CTxDestination, CAddressBookData>& item : pwallet->mapAddressBook) {
         const CTxDestination& dest = item.first;
         const std::string& strAccount = item.second.name;
         std::map<CTxDestination, tallyitem>::iterator it = mapTally.find(dest);
@@ -1985,13 +1983,13 @@ UniValue listaccounts(const JSONRPCRequest& request)
             includeWatchonly = includeWatchonly | ISMINE_WATCH_ONLY;
 
     std::map<std::string, CAmount> mapAccountBalances;
-    for (const std::pair<CTxDestination, CAddressBookData>& entry : pwallet->mapAddressBook) {
+    for (const std::pair<const CTxDestination, CAddressBookData>& entry : pwallet->mapAddressBook) {
         if (IsMine(*pwallet, entry.first) & includeWatchonly) {  // This address belongs to me
             mapAccountBalances[entry.second.name] = 0;
         }
     }
 
-    for (const std::pair<uint256, CWalletTx>& pairWtx : pwallet->mapWallet) {
+    for (const std::pair<const uint256, CWalletTx>& pairWtx : pwallet->mapWallet) {
         const CWalletTx& wtx = pairWtx.second;
         CAmount nFee;
         std::string strSentAccount;
@@ -2020,7 +2018,7 @@ UniValue listaccounts(const JSONRPCRequest& request)
         mapAccountBalances[entry.strAccount] += entry.nCreditDebit;
 
     UniValue ret(UniValue::VOBJ);
-    for (const std::pair<std::string, CAmount>& accountBalance : mapAccountBalances) {
+    for (const std::pair<const std::string, CAmount>& accountBalance : mapAccountBalances) {
         ret.push_back(Pair(accountBalance.first, ValueFromAmount(accountBalance.second)));
     }
     return ret;
@@ -2125,7 +2123,7 @@ UniValue listsinceblock(const JSONRPCRequest& request)
     UniValue transactions(UniValue::VARR);
     UniValue assetTransactions(UniValue::VARR);
 
-    for (const std::pair<uint256, CWalletTx>& pairWtx : pwallet->mapWallet) {
+    for (const std::pair<const uint256, CWalletTx>& pairWtx : pwallet->mapWallet) {
         CWalletTx tx = pairWtx.second;
 
         if (depth == -1 || tx.GetDepthInMainChain() < depth) {

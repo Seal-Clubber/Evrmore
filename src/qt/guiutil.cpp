@@ -55,6 +55,7 @@
 #include <QThread>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QLocale>
 
 #if QT_VERSION < QT_VERSION_CHECK(5, 0, 0)
 #include <QUrl>
@@ -164,7 +165,7 @@ QGraphicsDropShadowEffect* getShadowEffect()
 
 QString dateTimeStr(const QDateTime &date)
 {
-    return date.date().toString(Qt::SystemLocaleShortDate) + QString(" ") + date.toString("hh:mm");
+    return QLocale().toString(date.date(), QLocale::ShortFormat) + QString(" ") + date.toString("hh:mm");
 }
 
 QString dateTimeStr(qint64 nTime)

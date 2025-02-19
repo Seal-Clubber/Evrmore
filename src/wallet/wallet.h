@@ -46,6 +46,7 @@ extern bool fWalletRbf;
 
 extern std::string my_words;
 extern std::string my_passphrase;
+extern bool fJustImportedExistingMnemonic;
 
 static const unsigned int DEFAULT_KEYPOOL_SIZE = 1000;
 //! -paytxfee default

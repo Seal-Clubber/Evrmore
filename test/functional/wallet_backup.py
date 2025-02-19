@@ -108,9 +108,9 @@ class WalletBackupTest(EvrmoreTestFramework):
         self.nodes[3].generate(100)
         sync_blocks(self.nodes)
 
-        assert_equal(self.nodes[0].getbalance(), 5000)
-        assert_equal(self.nodes[1].getbalance(), 5000)
-        assert_equal(self.nodes[2].getbalance(), 5000)
+        assert_equal(self.nodes[0].getbalance(), 2778)
+        assert_equal(self.nodes[1].getbalance(), 2778)
+        assert_equal(self.nodes[2].getbalance(), 2778)
         assert_equal(self.nodes[3].getbalance(), 0)
 
         self.log.info("Creating transactions")
@@ -142,8 +142,8 @@ class WalletBackupTest(EvrmoreTestFramework):
         total = balance0 + balance1 + balance2 + balance3
 
         # At this point, there are 214 blocks (103 for setup, then 10 rounds, then 101.)
-        # 114 are mature, so the sum of all wallets should be 114 * 50 = 5700.
-        assert_equal(total, 570000)
+        # 114 are mature, so the sum of all wallets should be 114 * 2778 = 316692.
+        assert_equal(total, 316692)
 
         ##
         # Test restoring spender wallets from backups

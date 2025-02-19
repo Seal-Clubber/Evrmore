@@ -163,7 +163,6 @@ class AssetTest(EvrmoreTestFramework):
 
         assert_equal(len(txid), 64)
 
-
     def p2sh_2of3_multi_nodes_asset_transfer_test(self):
         self.log.info("Running p2sh_2of3_multi_nodes_asset_transfer_test")
         n0, n1 = self.nodes[0], self.nodes[1]

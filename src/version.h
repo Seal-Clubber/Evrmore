@@ -11,7 +11,7 @@
  * network protocol versioning
  */
 
-static const int PROTOCOL_VERSION = 70029;
+static const int PROTOCOL_VERSION = 70030;
 
 //! initial proto version, to be increased after version/verack negotiation
 static const int INIT_PROTO_VERSION = 209;
@@ -58,6 +58,9 @@ static const int KAWPOW_VERSION = 70027;
 
 //! In this version, P2SH Assets were introduced
 static const int P2SH_ASSETS_VERSION = 70029;
+
+//! In this version, P2SH Assets were introduced
+static const int TOLLS_BURN_MINT = 70030;
 
 //! disconnect from peers older than this proto version
 //!!! Anytime this value is changed please also update the "MY_VERSION" value to match in the

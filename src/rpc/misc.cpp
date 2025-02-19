@@ -1149,7 +1149,10 @@ UniValue getaddressbalance(const JSONRPCRequest& request)
         }
 
         CAmount balance = 0;
-        CAmount received = 0;
+        // In some scenarios there are so many received transactions that the number overflows and becomes negative.
+        // The current fix for this is to change the variable from a CAmount which is an int64_t to an uint64_t. This
+        // change doubles that viable amount that can be stored in the received variable.
+        uint64_t received = 0;
 
         for (std::vector<std::pair<CAddressIndexKey, CAmount> >::const_iterator it = addressIndex.begin();
              it != addressIndex.end(); it++) {

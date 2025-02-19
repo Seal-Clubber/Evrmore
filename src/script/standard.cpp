@@ -127,15 +127,25 @@ bool Solver(const CScript& scriptPubKey, txnouttype& typeRet, txnouttype& script
         typeRet = TX_RESTRICTED_ASSET_DATA;
 
         if (scriptPubKey.size() >= 23 && scriptPubKey[1] != OP_RESERVED) {
-            std::vector<unsigned char> hashBytes(scriptPubKey.begin() + 2, scriptPubKey.begin() + 22);
-            vSolutionsRet.push_back(hashBytes);
+            if (scriptPubKey[1] == OP_1NEGATE) {
+                // P2SH script
+                scriptTypeRet = TX_SCRIPTHASH;
+                std::vector<unsigned char> hashBytes(scriptPubKey.begin() + 3, scriptPubKey.begin() + 23);
+                vSolutionsRet.push_back(hashBytes);
+            } else {
+                // P2PKH script
+                scriptTypeRet = TX_PUBKEYHASH;
+
+                std::vector<unsigned char> hashBytes(scriptPubKey.begin() + 2, scriptPubKey.begin() + 22);
+                vSolutionsRet.push_back(hashBytes);
+            }
         }
         return true;
     }
 
     // Scan templates
     const CScript& script1 = scriptPubKey;
-    for (const std::pair<txnouttype, CScript>& tplate : mTemplates)
+    for (const std::pair<const txnouttype, CScript>& tplate : mTemplates)
     {
         const CScript& script2 = tplate.second;
         vSolutionsRet.clear();
@@ -256,7 +266,11 @@ bool ExtractDestination(const CScript& scriptPubKey, CTxDestination& addressRet)
         return true;
     } else if (whichType == TX_RESTRICTED_ASSET_DATA) {
         if (vSolutions.size()) {
-            addressRet = CKeyID(uint160(vSolutions[0]));
+            if (scriptType == TX_SCRIPTHASH) {
+                addressRet = CScriptID(uint160(vSolutions[0]));
+            } else {
+                addressRet = CKeyID(uint160(vSolutions[0]));
+            }
             return true;
         }
     }
@@ -356,7 +370,13 @@ namespace
 
         bool operator()(const CScriptID &scriptID) const {
             script->clear();
-            *script << OP_EVR_ASSET << ToByteVector(scriptID);
+            if (IsTollsActive()) {
+                // OP1_NEGATE was chosen because it is a PUSH only value and it worked.
+                // You can use any PUSH value though
+                *script << OP_EVR_ASSET << OP_1NEGATE << ToByteVector(scriptID);
+            } else {
+                *script << OP_EVR_ASSET << ToByteVector(scriptID);
+            }
             return true;
         }
     };

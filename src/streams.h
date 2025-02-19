@@ -237,6 +237,7 @@ public:
     const_iterator end() const                       { return vch.end(); }
     iterator end()                                   { return vch.end(); }
     size_type size() const                           { return vch.size() - nReadPos; }
+    unsigned int nreadPos() const                    { return nReadPos; }
     bool empty() const                               { return vch.size() == nReadPos; }
     void resize(size_type n, value_type c=0)         { vch.resize(n + nReadPos, c); }
     void reserve(size_type n)                        { vch.reserve(n + nReadPos); }

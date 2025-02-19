@@ -724,13 +724,14 @@ void CleanupBlockRevFiles()
     // keeping a separate counter.  Once we hit a gap (or if 0 doesn't exist)
     // start removing block files.
     int nContigCounter = 0;
-    for (const std::pair<std::string, fs::path>& item : mapBlockFiles) {
-        if (atoi(item.first) == nContigCounter) {
+    for (const std::pair<const std::string, fs::path>& item : mapBlockFiles) {
+        if (atoi(item.first.c_str()) == nContigCounter) {
             nContigCounter++;
             continue;
         }
         remove(item.second);
     }
+
 }
 
 void ThreadImport(std::vector<fs::path> vImportFiles)
@@ -1015,6 +1016,10 @@ bool AppInitParameterInteraction()
         if (gArgs.GetBoolArg("-txindex", DEFAULT_TXINDEX))
             return InitError(_("Prune mode is incompatible with -txindex."));
     }
+
+    // TODO - Remove for production release
+    if (!gArgs.IsArgSet("-testnet") && !gArgs.IsArgSet("-regtest") )
+            return InitError(_("Testnet and Regtest Only - Mainnet not allowed"));
 
     // -bind and -whitebind can't be set when not listening
     size_t nUserBind = gArgs.GetArgs("-bind").size() + gArgs.GetArgs("-whitebind").size();

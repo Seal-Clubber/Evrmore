@@ -150,16 +150,16 @@ class SegWitTest(EvrmoreTestFramework):
         for i in range(5):
             for n in range(3):
                 for v in range(2):
-                    wit_ids[n][v].append(send_to_witness(v, self.nodes[0], find_unspent(self.nodes[0], 5000), self.pubkey[n], False, Decimal("4999.9")))
-                    p2sh_ids[n][v].append(send_to_witness(v, self.nodes[0], find_unspent(self.nodes[0], 5000), self.pubkey[n], True, Decimal("4999.9")))
+                    wit_ids[n][v].append(send_to_witness(v, self.nodes[0], find_unspent(self.nodes[0], 2778), self.pubkey[n], False, Decimal("2777.9")))
+                    p2sh_ids[n][v].append(send_to_witness(v, self.nodes[0], find_unspent(self.nodes[0], 2778), self.pubkey[n], True, Decimal("2777.9")))
 
         self.nodes[0].generate(1)  # block 163
         sync_blocks(self.nodes)
 
         # Make sure all nodes recognize the transactions as theirs
-        assert_equal(self.nodes[0].getbalance(), balance_presetup - 60 * 5000 + 20 * Decimal("4999.9") + 5000)
-        assert_equal(self.nodes[1].getbalance(), 20 * Decimal("4999.9"))
-        assert_equal(self.nodes[2].getbalance(), 20 * Decimal("4999.9"))
+        assert_equal(self.nodes[0].getbalance(), balance_presetup - 60 * 2778 + 20 * Decimal("2777.9") + 2778)
+        assert_equal(self.nodes[1].getbalance(), 20 * Decimal("2777.9"))
+        assert_equal(self.nodes[2].getbalance(), 20 * Decimal("2777.9"))
 
         self.nodes[0].generate(260)  # block 423
         sync_blocks(self.nodes)
