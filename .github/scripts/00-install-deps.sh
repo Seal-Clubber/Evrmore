@@ -83,10 +83,10 @@ elif [[ ${OS} == "linux" || ${OS} == "linux-disable-wallet" || ${OS} == "aarch64
     ca-certificates \
     curl \
     g++-aarch64-linux-gnu \
-    g++-9-aarch64-linux-gnu \
-    g++-9-multilib \
-    gcc-9-aarch64-linux-gnu \
-    gcc-9-multilib \
+    g++-11-aarch64-linux-gnu \
+    g++-11-multilib \
+    gcc-11-aarch64-linux-gnu \
+    gcc-11-multilib \
     git \
     gnupg \
     libtool \
@@ -111,13 +111,13 @@ elif [[ ${OS} == "arm32v7" || ${OS} == "arm32v7-disable-wallet" ]]; then
     ca-certificates \
     curl \
     g++-aarch64-linux-gnu \
-    g++-9-aarch64-linux-gnu \
-    gcc-9-aarch64-linux-gnu \
+    g++-11-aarch64-linux-gnu \
+    gcc-11-aarch64-linux-gnu \
     g++-arm-linux-gnueabihf \
-    g++-9-arm-linux-gnueabihf \
-    gcc-9-arm-linux-gnueabihf \
-    g++-9-multilib \
-    gcc-9-multilib \
+    g++-11-arm-linux-gnueabihf \
+    gcc-11-arm-linux-gnueabihf \
+    g++-11-multilib \
+    gcc-11-multilib \
     git \
     libtool \
     pkg-config \
