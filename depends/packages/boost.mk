@@ -1,9 +1,9 @@
 package=boost
-$(package)_version=1_71_0
+$(package)_version=1_78_0
 #$(package)_download_path=https://boostorg.jfrog.io/artifactory/main/release/$(subst _,.,$($(package)_version))/source/
-$(package)_download_path=https://archives.boost.io/release/1.71.0/source/
+$(package)_download_path=https://archives.boost.io/release/1.78.0/source/
 $(package)_file_name=boost_$($(package)_version).tar.bz2
-$(package)_sha256_hash=d73a8da01e8bf8c7eda40b4c84915071a8c8a0df4a6734537ddde4a8580524ee
+$(package)_sha256_hash=0d202bb07c96f910b0f7dce1f6cba1422c5c18ac46ef37e9c43aa3c9424e5be7
 $(package)_dependencies=native_b2
 
 define $(package)_set_vars
