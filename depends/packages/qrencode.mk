@@ -1,9 +1,8 @@
 package=qrencode
 $(package)_version=3.4.4
 #$(package)_download_path=https://fukuchi.org/works/qrencode/
-$(package)_download_path=https://web.archive.org/web/20250406164351/https://fukuchi.org/works/qrencode/
-#$(package)_file_name=$(package)-$($(package)_version).tar.bz2
-$(package)_file_name=v$($(package)_version).tar.gz
+$(package)_download_path=https://web.archive.org/web/20250406072722/https://fukuchi.org/works/qrencode/
+$(package)_file_name=$(package)-$($(package)_version).tar.bz2
 $(package)_sha256_hash=efe5188b1ddbcbf98763b819b146be6a90481aac30cfc8d858ab78a19cde1fa5
 
 
