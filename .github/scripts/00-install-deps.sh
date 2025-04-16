@@ -129,6 +129,6 @@ else
 fi
     update-alternatives --install /usr/bin/python python /usr/bin/python2 1
     update-alternatives --install /usr/bin/python python /usr/bin/python3 2
-    update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-9 90
-    update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-9 90
+    #update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-9 90
+    #update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-9 90
 
