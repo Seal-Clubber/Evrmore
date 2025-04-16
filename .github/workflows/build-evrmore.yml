@@ -59,7 +59,7 @@ jobs:
     
     strategy:
       matrix:
-       OS: [ 'windows', 'linux', 'linux-disable-wallet', 'osx', 'arm32v7', 'arm32v7-disable-wallet', 'aarch64', 'aarch64-disable-wallet' ]
+       OS: [ 'windows', 'linux', 'linux-disable-wallet', 'arm32v7', 'arm32v7-disable-wallet', 'aarch64', 'aarch64-disable-wallet' ]
 
 #&&&&&& Beginning- section to free up space on root for the builds and for 30GB of swap
     steps:
