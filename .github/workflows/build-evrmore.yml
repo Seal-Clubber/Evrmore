@@ -59,7 +59,7 @@ jobs:
     
     strategy:
       matrix:
-       OS: [ 'windows' ]
+       OS: [ 'arm32v7' ]
 
 #&&&&&& Beginning- section to free up space on root for the builds and for 30GB of swap
     steps:
